@@ -1,0 +1,31 @@
+# SPDX-FileCopyrightText: misskey-egress-proxy contributors
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# Instance A: the system under test. Listens on a UDS, exactly like
+# production, so misskey-egress-proxy-a exercises the real code path.
+
+url: https://misskey-a/
+socket: /run/misskey/misskey.sock
+chmodSocket: '777'
+
+db:
+  host: postgres-a
+  port: 5432
+  db: misskey
+  user: misskey
+  pass: testpass
+
+redis:
+  host: redis-a
+  port: 6379
+
+fulltextSearch:
+  provider: sqlLike
+
+id: 'aidx'
+
+# Test-only: this whole "federation" is two containers on a private Docker
+# subnet, and Misskey's SSRF guard refuses outbound requests to private IPs
+# by default. NEVER set this in production.
+allowedPrivateNetworks:
+  - '172.30.0.0/16'

@@ -1,0 +1,32 @@
+# SPDX-FileCopyrightText: misskey-egress-proxy contributors
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# Production reference. Only shows this proxy and its connection to an
+# existing Misskey deployment's UDS — it does not define Misskey itself, the
+# internal Caddy/Tailscale leg, or the external TLS terminator in front of
+# this proxy (see README.md for the full architecture). Wire `misskey-uds`
+# up as whatever volume your Misskey container already writes its socket
+# into.
+
+services:
+  misskey-egress-proxy:
+    build: .
+    image: misskey-egress-proxy:latest
+    restart: unless-stopped
+    environment:
+      LISTEN_ADDR: "0.0.0.0:8080"
+      MISSKEY_SOCKET: /run/misskey/misskey.sock
+      # Internal (Tailscale-reachable) Misskey base URL and the Referer
+      # suffix that identifies a caller as internal. See docs/routes.md.
+      INTERNAL_BASE_URL: "https://misskey.your-tailnet.ts.net"
+      INTERNAL_REFERER_SUFFIX: ".your-tailnet.ts.net"
+    volumes:
+      - misskey-uds:/run/misskey:ro
+    # Public-facing: put a TLS terminator (Caddy, Cloudflare Tunnel, ...) in
+    # front of this port. This process only ever speaks plain HTTP.
+    expose:
+      - "8080"
+
+volumes:
+  misskey-uds:
+    external: true

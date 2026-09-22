@@ -1,0 +1,212 @@
+# SPDX-FileCopyrightText: misskey-egress-proxy contributors
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# Misskey <-> misskey-egress-proxy <-> Misskey federation test.
+#
+# Instance A is the system under test: a real Misskey backend on a UDS,
+# fronted by this repo's misskey-egress-proxy exactly as in production.
+# Instance B is a real, independent Misskey acting as a remote federation
+# peer (fronted by a bare TLS terminator, not by the proxy under test).
+#
+# Nothing here is published on the host. Both sides only ever talk to each
+# other over the compose-internal network, over TLS with self-signed certs.
+# Certificate *validation* is disabled everywhere in this stack (curl's -k,
+# and NODE_TLS_REJECT_UNAUTHORIZED=0 inside Misskey, whose undici HTTP
+# client does not honor NODE_EXTRA_CA_CERTS) — this is fine because the
+# entire stack is an isolated, throwaway compose network. NEVER carry
+# NODE_TLS_REJECT_UNAUTHORIZED=0 into a real deployment.
+#
+# See README.md in this directory for how to run it and what it proves.
+
+services:
+  # ── instance A: the system under test ──────────────────────────
+  postgres-a:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_DB: misskey
+      POSTGRES_USER: misskey
+      POSTGRES_PASSWORD: testpass
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U misskey"]
+      interval: 3s
+      retries: 30
+
+  redis-a:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      retries: 30
+
+  # Named volumes start out root-owned; the official image runs as the
+  # unprivileged `misskey` user (uid/gid 991), which can't create its
+  # socket in a root-owned directory. One-shot chown before Misskey starts.
+  misskey-a-socket-init:
+    image: busybox
+    command: chown 991:991 /run/misskey
+    volumes:
+      - misskey-a-socket:/run/misskey
+
+  misskey-app-a:
+    image: misskey/misskey:latest
+    environment:
+      NODE_TLS_REJECT_UNAUTHORIZED: "0" # test-only, see header comment
+    volumes:
+      - ./config/misskey-a.yml:/misskey/.config/default.yml:ro
+      - misskey-a-socket:/run/misskey
+    depends_on:
+      postgres-a:
+        condition: service_healthy
+      redis-a:
+        condition: service_healthy
+      misskey-a-socket-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "curl",
+          "-Sfso/dev/null",
+          "--unix-socket",
+          "/run/misskey/misskey.sock",
+          "http://localhost/healthz",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 60
+
+  misskey-egress-proxy-a:
+    build:
+      context: ../..
+    environment:
+      LISTEN_ADDR: "0.0.0.0:8080"
+      MISSKEY_SOCKET: /run/misskey/misskey.sock
+      # Not exercised by the federation scenario itself (no caller in this
+      # compose actually lives under this suffix) — the unit tests in
+      # tests/router.rs cover the redirect behavior directly. Kept here so
+      # the container matches how it's really configured in production.
+      INTERNAL_BASE_URL: "http://internal-a.invalid"
+      INTERNAL_REFERER_SUFFIX: ".internal-a.invalid"
+    volumes:
+      - misskey-a-socket:/run/misskey:ro
+    depends_on:
+      misskey-app-a:
+        condition: service_healthy
+
+  # nginx named literally `misskey-a` so it resolves as `url: https://misskey-a/`
+  # (Misskey's own config) via compose's built-in per-service DNS — no extra
+  # network aliasing needed.
+  misskey-a:
+    image: nginx:alpine
+    volumes:
+      - ./nginx/misskey-a.conf:/etc/nginx/nginx.conf:ro
+      - certs:/certs:ro
+    depends_on:
+      misskey-egress-proxy-a:
+        condition: service_started
+      certs:
+        condition: service_completed_successfully
+
+  # ── instance B: plain remote peer ───────────────────────────────
+  postgres-b:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_DB: misskey
+      POSTGRES_USER: misskey
+      POSTGRES_PASSWORD: testpass
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U misskey"]
+      interval: 3s
+      retries: 30
+
+  redis-b:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      retries: 30
+
+  misskey-app-b:
+    image: misskey/misskey:latest
+    environment:
+      NODE_TLS_REJECT_UNAUTHORIZED: "0" # test-only, see header comment
+    volumes:
+      - ./config/misskey-b.yml:/misskey/.config/default.yml:ro
+    depends_on:
+      postgres-b:
+        condition: service_healthy
+      redis-b:
+        condition: service_healthy
+    # Uses the image's own built-in healthcheck (curls :3000/healthz using
+    # the `port:` value from default.yml), since B listens on a TCP port.
+
+  misskey-b:
+    image: nginx:alpine
+    volumes:
+      - ./nginx/misskey-b.conf:/etc/nginx/nginx.conf:ro
+      - certs:/certs:ro
+    depends_on:
+      misskey-app-b:
+        condition: service_healthy
+      certs:
+        condition: service_completed_successfully
+
+  # ── test orchestration ───────────────────────────────────────────
+  certs:
+    image: alpine:3.21
+    command: sh -c "apk add --no-cache openssl >/dev/null && /gen-certs.sh"
+    environment:
+      CERT_DOMAINS: "misskey-a,misskey-b"
+    volumes:
+      - certs:/certs
+      - ./certs/gen-certs.sh:/gen-certs.sh:ro
+
+  # `seed` and `scenario` both get a read-only mount of instance A's UDS
+  # directly, alongside the normal public HTTPS route through misskey-a /
+  # misskey-egress-proxy-a. This mirrors production on purpose: admin/setup
+  # operations (`/api/*`) are only ever reachable over the "internal" path
+  # (here, the raw socket; in production, Tailscale + the internal Caddy),
+  # never through the public egress proxy — which is exactly the property
+  # this whole project exists to enforce, so seeding A's admin account has
+  # to go around the proxy the same way a real internal operator would.
+  # Instance B has no such restriction: it's a plain peer, seeded entirely
+  # over its normal public HTTPS API.
+  seed:
+    image: alpine:3.21
+    command: sh -c "apk add --no-cache curl jq >/dev/null && /seed.sh"
+    volumes:
+      - ./seed.sh:/seed.sh:ro
+      - tokens:/tokens
+      - misskey-a-socket:/run/misskey-a:ro
+    depends_on:
+      misskey-app-a:
+        condition: service_healthy
+      misskey-a:
+        condition: service_started
+      misskey-b:
+        condition: service_started
+
+  scenario:
+    image: alpine:3.21
+    command: sh -c "apk add --no-cache curl jq >/dev/null && /scenario.sh"
+    volumes:
+      - ./scenario.sh:/scenario.sh:ro
+      - misskey-a-socket:/run/misskey-a:ro
+      - tokens:/tokens
+    depends_on:
+      seed:
+        condition: service_completed_successfully
+
+volumes:
+  certs:
+  tokens:
+  misskey-a-socket:
+
+networks:
+  # Pinned so `allowedPrivateNetworks` in the Misskey configs (an SSRF
+  # guard that otherwise refuses outbound requests to private IPs — which
+  # is all this compose network has) can name it reliably across runs.
+  default:
+    ipam:
+      config:
+        - subnet: 172.30.0.0/16

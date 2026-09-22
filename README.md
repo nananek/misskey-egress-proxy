@@ -1,1 +1,83 @@
 # misskey-egress-proxy
+
+A minimal reverse proxy that sits between the public internet / federated
+ActivityPub servers and a [Misskey](https://github.com/misskey-dev/misskey)
+instance's Unix domain socket, exposing **only** the routes federation
+actually needs — inbox, outbox, actor/note lookup, WebFinger, NodeInfo,
+and media — and nothing else.
+
+```
+[internal users] - [Tailscale] - [Caddy]           -\
+                                                        > [Misskey UDS]
+[external users] - [federated AP servers] - [this proxy] -/
+```
+
+## Why
+
+Misskey's backend is a single process that mounts everything — the
+session/token-authenticated client API (`/api/*`), the WebSocket streaming
+endpoint, the OAuth login flow, the admin panel, the full web client SPA,
+*and* the ActivityPub federation surface — on one listener. Deployed
+as-is, all of that is reachable from the public internet, when in practice
+a legitimate logged-in user is fine going through an internal network
+(Tailscale + Caddy here), and a federated server only ever needs a small,
+well-defined slice of routes.
+
+This project enforces that split at the network edge, since Misskey itself
+can't be changed (it's distributed AGPL-3.0-only; we run the official
+image unmodified). The approach is directly inspired by
+[nananek/sakurasato](https://github.com/nananek/sakurasato), a solo-operator
+ActivityPub server that bakes the same idea into its own router — its
+public listener registers *only* federation routes, with everything
+requiring authentication served from an entirely separate local socket.
+Misskey isn't built that way, so this proxy exists to impose the same
+shape from the outside.
+
+The full route table — every path this proxy allows through, and why, with
+citations into Misskey's own source — is in [`docs/routes.md`](docs/routes.md).
+
+## Design
+
+- **Pure allowlist, no business logic.** The proxy does not parse, join,
+  reshape, or cache anything Misskey returns. It matches a request against
+  a static route table and either forwards it byte-for-byte (method,
+  headers, raw body — this matters for `/inbox`'s HTTP Signature `Digest`)
+  or returns 404.
+- **Two narrow exceptions**, both required for correctness, not policy:
+  - Three paths (`/notes/:note`, `/users/:user`, `/@:acct`) serve either
+    an ActivityPub JSON object or a full HTML page from Misskey, chosen by
+    the `Accept` header. This proxy never forwards the HTML variant to the
+    public internet — anonymous external visitors get AP JSON or a 406.
+  - `/files/*` and `/proxy/*` (media) redirect to the internal deployment
+    instead of proxying bytes when the request's `Referer` looks internal
+    — a bandwidth optimization, not a security boundary.
+- **No TLS in this process.** Put a TLS terminator (Caddy, Cloudflare
+  Tunnel, ...) in front of it; this binary only ever speaks plain HTTP.
+- **Rust, AGPL-3.0.** The allowlist is necessarily derived from reading
+  Misskey's own (AGPL-3.0-only) source — there's no clean-room public spec
+  that fully determines it — so this project ships under the same license
+  rather than claiming independence it doesn't have.
+
+## Configuration
+
+All via environment variables (see `src/config.rs`):
+
+| Variable | Example | Meaning |
+|---|---|---|
+| `LISTEN_ADDR` | `0.0.0.0:8080` | Where the proxy itself listens (plain HTTP) |
+| `MISSKEY_SOCKET` | `/run/misskey/misskey.sock` | Misskey's UDS |
+| `INTERNAL_BASE_URL` | `https://misskey.your-tailnet.ts.net` | Redirect target for internal media callers |
+| `INTERNAL_REFERER_SUFFIX` | `.your-tailnet.ts.net` | Hostname suffix that marks a `Referer` as internal |
+
+See `docker-compose.yml` for a production reference layout.
+
+## Testing
+
+```sh
+cargo test                        # allowlist / Accept-gate / redirect logic, no real Misskey needed
+cd tests/federation && docker compose up --build   # two real Misskey instances federating through this proxy
+```
+
+The federation test is the one that actually matters: see
+[`tests/federation/README.md`](tests/federation/README.md) for what it
+proves.

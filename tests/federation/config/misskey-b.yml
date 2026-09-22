@@ -1,0 +1,31 @@
+# SPDX-FileCopyrightText: misskey-egress-proxy contributors
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# Instance B: a plain remote federation peer. Not the system under test —
+# it exists only so instance A has a real, independent Misskey to federate
+# with. No egress proxy in front of it, just a bare TLS terminator.
+
+url: https://misskey-b/
+port: 3000
+
+db:
+  host: postgres-b
+  port: 5432
+  db: misskey
+  user: misskey
+  pass: testpass
+
+redis:
+  host: redis-b
+  port: 6379
+
+fulltextSearch:
+  provider: sqlLike
+
+id: 'aidx'
+
+# Test-only: this whole "federation" is two containers on a private Docker
+# subnet, and Misskey's SSRF guard refuses outbound requests to private IPs
+# by default. NEVER set this in production.
+allowedPrivateNetworks:
+  - '172.30.0.0/16'
