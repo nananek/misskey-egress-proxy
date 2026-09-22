@@ -23,7 +23,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::any;
 use tower::ServiceExt;
 
-use misskey_egress_proxy::config::Config;
+use misskey_egress_proxy::config::{Config, ListenTarget};
 use misskey_egress_proxy::proxy::{ProxyState, build_client};
 use misskey_egress_proxy::routes;
 
@@ -79,7 +79,7 @@ fn unique_suffix() -> String {
 async fn build_app() -> Router {
     let socket = spawn_mock_backend().await;
     let config = Arc::new(Config {
-        listen_addr: "127.0.0.1:0".to_string(),
+        listen: ListenTarget::Tcp("127.0.0.1:0".to_string()),
         misskey_socket: socket.clone(),
         internal_base_url: INTERNAL_BASE_URL.to_string(),
         internal_referer_suffix: INTERNAL_SUFFIX.to_string(),

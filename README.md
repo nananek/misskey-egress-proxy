@@ -53,6 +53,10 @@ citations into Misskey's own source — is in [`docs/routes.md`](docs/routes.md)
     — a bandwidth optimization, not a security boundary.
 - **No TLS in this process.** Put a TLS terminator (Caddy, Cloudflare
   Tunnel, ...) in front of it; this binary only ever speaks plain HTTP.
+  It can accept that terminator's requests over a Unix socket rather than
+  TCP (`LISTEN_ADDR=unix:...`), which lets the proxy container run with
+  `network_mode: none` — the only things it can then reach are the two
+  sockets it is handed.
 - **Rust, AGPL-3.0.** The allowlist is necessarily derived from reading
   Misskey's own (AGPL-3.0-only) source — there's no clean-room public spec
   that fully determines it — so this project ships under the same license
@@ -64,7 +68,8 @@ All via environment variables (see `src/config.rs`):
 
 | Variable | Example | Meaning |
 |---|---|---|
-| `LISTEN_ADDR` | `0.0.0.0:8080` | Where the proxy itself listens (plain HTTP) |
+| `LISTEN_ADDR` | `0.0.0.0:8080`, `unix:/run/egress/egress.sock` | Where the proxy itself listens (plain HTTP). A `unix:` prefix listens on a Unix socket instead of TCP |
+| `LISTEN_SOCKET_MODE` | `0666` (default) | Mode applied to that socket after `bind`; Unix form only |
 | `MISSKEY_SOCKET` | `/run/misskey/misskey.sock` | Misskey's UDS |
 | `INTERNAL_BASE_URL` | `https://misskey.your-tailnet.ts.net` | Redirect target for internal media callers |
 | `INTERNAL_REFERER_SUFFIX` | `.your-tailnet.ts.net` | Hostname suffix that marks a `Referer` as internal |

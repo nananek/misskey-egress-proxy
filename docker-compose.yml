@@ -6,7 +6,7 @@
 # internal Caddy/Tailscale leg, or the external TLS terminator in front of
 # this proxy (see README.md for the full architecture). Wire `misskey-uds`
 # up as whatever volume your Misskey container already writes its socket
-# into.
+# into, and mount `egress-uds` into the TLS terminator as well.
 #
 # Pulls the image CI publishes to GHCR on every push to main
 # (.github/workflows/ci.yml) rather than building from source — swap in
@@ -17,19 +17,24 @@ services:
     image: ghcr.io/nananek/misskey-egress-proxy:latest
     restart: unless-stopped
     environment:
-      LISTEN_ADDR: "0.0.0.0:8080"
+      # Public-facing, but over a socket: the TLS terminator (Caddy,
+      # cloudflared, ...) mounts `egress-uds` and dials this. Swap for
+      # `0.0.0.0:8080` plus `expose: ["8080"]` if your terminator can only
+      # speak TCP.
+      LISTEN_ADDR: "unix:/run/egress/egress.sock"
+      LISTEN_SOCKET_MODE: "0666"
       MISSKEY_SOCKET: /run/misskey/misskey.sock
       # Internal (Tailscale-reachable) Misskey base URL and the Referer
       # suffix that identifies a caller as internal. See docs/routes.md.
       INTERNAL_BASE_URL: "https://misskey.your-tailnet.ts.net"
       INTERNAL_REFERER_SUFFIX: ".your-tailnet.ts.net"
+    # Both legs are sockets, so the proxy needs no IP networking at all.
+    network_mode: "none"
     volumes:
       - misskey-uds:/run/misskey:ro
-    # Public-facing: put a TLS terminator (Caddy, Cloudflare Tunnel, ...) in
-    # front of this port. This process only ever speaks plain HTTP.
-    expose:
-      - "8080"
+      - egress-uds:/run/egress
 
 volumes:
   misskey-uds:
     external: true
+  egress-uds:
