@@ -4,9 +4,9 @@
 //! Verifies the allowlist, the `Accept` gate on the three dual-purpose
 //! paths, and the internal-`Referer` media redirect — all without a real
 //! Misskey instance. A tiny mock backend on a Unix socket stands in for
-//! Misskey and echoes the request path back in `x-mock-path`, so tests can
-//! confirm both that a request was let through *and* that it reached the
-//! backend with the exact path/query it arrived with.
+//! Misskey and echoes the request path back in `x-mock-path` (and the
+//! `Accept` it was asked with in `x-mock-accept`), so tests can confirm both
+//! that a request was let through *and* what the backend was asked for.
 //!
 //! This is deliberately not where federation correctness is proven — that
 //! requires two real Misskey instances actually speaking ActivityPub
@@ -33,7 +33,8 @@ const INTERNAL_SUFFIX: &str = ".internal.example.ts.net";
 const AP_ACCEPT: (&str, &str) = ("accept", "application/activity+json");
 
 /// Spawns a fake Misskey backend on a Unix socket that answers every
-/// request with 200 and echoes the request path+query into `x-mock-path`.
+/// request with 200 and echoes the request path+query into `x-mock-path`
+/// and the request's `Accept` into `x-mock-accept`.
 async fn spawn_mock_backend() -> PathBuf {
     let socket = std::env::temp_dir().join(format!("mep-test-{}.sock", unique_suffix()));
     let _ = std::fs::remove_file(&socket);
@@ -63,7 +64,18 @@ async fn echo_path(req: Request<Body>) -> Response {
         .path_and_query()
         .map(|pq| pq.as_str().to_string())
         .unwrap_or_default();
-    (StatusCode::OK, [("x-mock-path", path)], "mock-backend").into_response()
+    let accept = req
+        .headers()
+        .get("accept")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+    (
+        StatusCode::OK,
+        [("x-mock-path", path), ("x-mock-accept", accept)],
+        "mock-backend",
+    )
+        .into_response()
 }
 
 /// Tests run in parallel, and two of them can read the same nanosecond off
@@ -190,25 +202,32 @@ async fn client_and_admin_surface_is_not_reachable() {
 }
 
 #[tokio::test]
-async fn dual_purpose_paths_require_explicit_ap_accept() {
+async fn dual_purpose_paths_always_ask_misskey_for_ap_json() {
     let app = build_app().await;
 
     for path in ["/notes/abc", "/users/abc", "/@alice"] {
-        assert_eq!(
-            get(&app, path, &[]).await.status(),
-            StatusCode::NOT_ACCEPTABLE,
-            "{path} with no Accept must 406"
-        );
-        assert_eq!(
-            get(&app, path, &[("accept", "text/html")]).await.status(),
-            StatusCode::NOT_ACCEPTABLE,
-            "{path} with html-only Accept must 406"
-        );
-        assert_eq!(
-            get(&app, path, &[AP_ACCEPT]).await.status(),
-            StatusCode::OK,
-            "{path} with AP Accept must be forwarded"
-        );
+        for accept in [
+            None,
+            Some("text/html"),
+            Some("*/*"),
+            Some("text/html,application/xhtml+xml"),
+            Some("application/activity+json"),
+        ] {
+            let headers: Vec<(&str, &str)> =
+                accept.map(|a| vec![("accept", a)]).unwrap_or_default();
+            let resp = get(&app, path, &headers).await;
+
+            assert_eq!(
+                resp.status(),
+                StatusCode::OK,
+                "{path} with Accept {accept:?} must be forwarded, not refused"
+            );
+            assert_eq!(
+                resp.headers().get("x-mock-accept").unwrap(),
+                "application/activity+json",
+                "{path} with Accept {accept:?} must reach Misskey asking for AP JSON"
+            );
+        }
     }
 }
 

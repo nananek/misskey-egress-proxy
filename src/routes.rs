@@ -7,7 +7,7 @@ use axum::Router;
 use axum::middleware;
 use axum::routing::{get, post};
 
-use crate::accept_gate::require_ap_accept;
+use crate::accept_gate::force_ap_accept;
 use crate::config::Config;
 use crate::media_redirect::redirect_internal_referer;
 use crate::proxy::{ProxyState, forward};
@@ -28,12 +28,13 @@ pub fn build(proxy_state: ProxyState, config: Arc<Config>) -> Router {
             redirect_internal_referer,
         ));
 
-    // The three dual-purpose (AP-or-HTML) paths: gated on `Accept`.
+    // The three dual-purpose (AP-or-HTML) paths: `Accept` is rewritten to
+    // AP JSON, so Misskey never picks its HTML branch for a public caller.
     let gated = Router::new()
         .route("/notes/{note}", get(forward))
         .route("/users/{user}", get(forward))
         .route("/@{acct}", get(forward))
-        .layer(middleware::from_fn(require_ap_accept));
+        .layer(middleware::from_fn(force_ap_accept));
 
     // Everything else: unconditionally AP-only in Misskey itself, so no
     // extra gating is needed here.

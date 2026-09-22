@@ -46,8 +46,10 @@ citations into Misskey's own source — is in [`docs/routes.md`](docs/routes.md)
 - **Two narrow exceptions**, both required for correctness, not policy:
   - Three paths (`/notes/:note`, `/users/:user`, `/@:acct`) serve either
     an ActivityPub JSON object or a full HTML page from Misskey, chosen by
-    the `Accept` header. This proxy never forwards the HTML variant to the
-    public internet — anonymous external visitors get AP JSON or a 406.
+    the `Accept` header. This proxy rewrites that header to
+    `application/activity+json` on those three paths, so the HTML variant
+    is never reachable from the public internet and every caller — a
+    federated server, a crawler, a person pasting the URL — gets AP JSON.
   - `/files/*` and `/proxy/*` (media) redirect to the internal deployment
     instead of proxying bytes when the request's `Referer` looks internal
     — a bandwidth optimization, not a security boundary.

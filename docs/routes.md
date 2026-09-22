@@ -16,15 +16,15 @@
 | `/nodeinfo/2.0`, `/nodeinfo/2.1` | GET | `NodeinfoServerService.ts` | |
 | `/inbox` | POST | `ActivityPubServerService.ts:647` | shared inbox, body 64KB上限, HTTP署名必須 |
 | `/users/:user/inbox` | POST | 同上:648 | per-user inbox |
-| `/notes/:note` | GET | 同上:651 | **Accept gate 対象**（`apOrHtml` constraint） |
+| `/notes/:note` | GET | 同上:651 | **Accept 上書き対象**（`apOrHtml` constraint） |
 | `/notes/:note/activity` | GET | 同上:686 | AP専用、gate 不要 |
 | `/users/:user/outbox` | GET | 同上:715 | |
 | `/users/:user/followers` | GET | 同上:721 | |
 | `/users/:user/following` | GET | 同上:727 | |
 | `/users/:user/collections/featured` | GET | 同上:730 | pinned notes |
 | `/users/:user/publickey` | GET | 同上:733 | |
-| `/users/:user` | GET | 同上:763 | **Accept gate 対象** |
-| `/@:acct` | GET | 同上:781 | **Accept gate 対象**。`acct@host` 形式もまとめて1セグメントとして一致する（`matchit` で確認済み） |
+| `/users/:user` | GET | 同上:763 | **Accept 上書き対象** |
+| `/@:acct` | GET | 同上:781 | **Accept 上書き対象**。`acct@host` 形式もまとめて1セグメントとして一致する（`matchit` で確認済み） |
 | `/emojis/:emoji` | GET | 同上:804 | 複数形のみ。単数形 `/emoji/:path` は対象外（下記） |
 | `/likes/:like` | GET | 同上:826 | |
 | `/follows/:follower/:followee` | GET | 同上:852 | |
@@ -81,15 +81,19 @@ federation には不要と判断し allowlist から除外した。
   静的アセット）── `ClientServerService.ts` で確認済み、すべてクライアント
   向け。
 
-## Accept ゲート（3パスのみ）
+## Accept の上書き（3パスのみ）
 
 `/notes/:note`, `/users/:user`, `/@:acct` は Misskey 側で HTML/AP
 両対応（fastify constraint `apOrHtml`、`ActivityPubServerService.ts:594-612`）
 になっているが、本プロキシは HTML を一切公開しない方針のため
 （外部からの匿名アクセスには AP JSON だけ返せば十分、というのが本設計の
-前提）、`src/accept_gate.rs` の `require_ap_accept` ミドルウェアで
-`Accept` に `application/activity+json` または `application/ld+json` を
-含まないリクエストを 406 で止める。
+前提）、`src/accept_gate.rs` の `force_ap_accept` ミドルウェアで
+`Accept` を `application/activity+json` に**書き換えてから**転送する。
+呼び出し側の `Accept` を審査しないので、この3パスは常に AP JSON を返す。
+
+当初は AP を明示していないリクエストを 406 で止めていたが、
+`Accept: */*` や `Accept` 無しで取りに来る連合実装を巻き込んで落とすため、
+上書きに改めた。どうせ書き換えるヘッダで相手を選別する意味は無い。
 
 ## media の内部リダイレクト特例
 
