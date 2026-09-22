@@ -3,7 +3,10 @@
 This is the real end-to-end proof for this project: instance A is a real
 Misskey backend (`misskey/misskey:latest`) fronted by this repo's
 `misskey-egress-proxy` exactly as in production, federating with a real,
-independent peer implementation. If the allowlist, the `Accept` gate, or
+independent peer implementation. Both of the proxy's legs are Unix sockets
+here — nginx dials the proxy's listening socket, and the proxy dials
+Misskey's — matching the production compose, so the `LISTEN_ADDR=unix:...`
+listen path is part of what every scenario exercises. If the allowlist, the `Accept` gate, or
 the media redirect were wrong, this would fail the same way it would
 against a real fediverse peer.
 

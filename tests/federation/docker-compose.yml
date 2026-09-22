@@ -3,8 +3,9 @@
 #
 # Base stack: instance A, the system under test. A real Misskey backend on
 # a UDS, fronted by this repo's misskey-egress-proxy exactly as in
-# production. On its own this brings up nothing to federate *with* — pick a
-# peer overlay too, e.g.:
+# production — including the proxy's own listen socket, so both legs
+# (nginx -> proxy, proxy -> Misskey) are Unix sockets here. On its own this
+# brings up nothing to federate *with* — pick a peer overlay too, e.g.:
 #
 #   docker compose -f docker-compose.yml -f docker-compose.misskey.yml up --build
 #
@@ -76,11 +77,25 @@ services:
       timeout: 5s
       retries: 60
 
+  # The egress socket volume starts root-owned and the proxy runs as the
+  # distroless `nonroot` user (uid 65532), which can't create its listening
+  # socket in it. One-shot chown before the proxy starts, same pattern as
+  # misskey-a-socket-init above.
+  egress-socket-init:
+    image: busybox
+    command: chown 65532:65532 /run/egress
+    volumes:
+      - egress-uds:/run/egress
+
   misskey-egress-proxy-a:
     build:
       context: ../..
     environment:
-      LISTEN_ADDR: "0.0.0.0:8080"
+      # Production-shaped: the proxy listens on a Unix socket and nginx
+      # dials that, so the UDS listen path (LISTEN_ADDR=unix:...) is what
+      # the federation test actually exercises, not a TCP fallback.
+      LISTEN_ADDR: "unix:/run/egress/egress.sock"
+      LISTEN_SOCKET_MODE: "0666"
       MISSKEY_SOCKET: /run/misskey/misskey.sock
       # Not exercised by any scenario script (no caller in this compose
       # actually lives under this suffix) — the unit tests in
@@ -90,9 +105,12 @@ services:
       INTERNAL_REFERER_SUFFIX: ".internal-a.invalid"
     volumes:
       - misskey-a-socket:/run/misskey:ro
+      - egress-uds:/run/egress
     depends_on:
       misskey-app-a:
         condition: service_healthy
+      egress-socket-init:
+        condition: service_completed_successfully
 
   # nginx named literally `misskey-a` so it resolves as `url: https://misskey-a/`
   # (Misskey's own config) via compose's built-in per-service DNS — no extra
@@ -102,6 +120,7 @@ services:
     volumes:
       - ./nginx/misskey-a.conf:/etc/nginx/nginx.conf:ro
       - certs:/certs:ro
+      - egress-uds:/run/egress:ro
     depends_on:
       misskey-egress-proxy-a:
         condition: service_started
@@ -142,3 +161,4 @@ volumes:
   certs:
   tokens:
   misskey-a-socket:
+  egress-uds:
