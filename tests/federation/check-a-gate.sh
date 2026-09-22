@@ -43,7 +43,11 @@ for path in \
 	"/robots.txt" \
 	"/" \
 	"/emoji/x.webp" \
-	"/avatar/@admin"; do
+	"/avatar/@admin" \
+	"/@admin.rss" \
+	"/@admin.atom" \
+	"/@admin.json" \
+	"/@admin%2erss"; do
 	status="$(call GET "https://misskey-a${path}")"
 	if [ "$status" = "404" ]; then
 		ok "${path} -> 404 as expected"
@@ -114,3 +118,12 @@ if [ "$status" = "302" ]; then
 else
 	bad "internal Referer on /files/app-default.jpg -> HTTP ${status}, expected 302"
 fi
+
+# The redirect is scoped to the media routes: the same spoofed Referer on a
+# path that is not on the allowlist must still be a plain 404, never a 302
+# to the internal host.
+status="$(curl -sk -o /dev/null -w '%{http_code}' \
+	-H 'Referer: https://caller.internal-a.invalid/' \
+	"https://misskey-a/api/meta")"
+[ "$status" = "404" ] && ok "internal Referer on /api/meta -> 404 (redirect stays scoped to media)" \
+	|| bad "internal Referer on /api/meta -> HTTP ${status}, expected 404"

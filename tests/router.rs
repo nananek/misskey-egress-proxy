@@ -284,3 +284,65 @@ async fn media_paths_ignore_non_internal_referer() {
     .await;
     assert_eq!(resp.status(), StatusCode::OK);
 }
+
+#[tokio::test]
+async fn client_feed_twins_of_the_acct_path_are_not_reachable() {
+    let app = build_app().await;
+
+    // `/@:user.rss`, `/@:user.atom`, and `/@:user.json` are client-only
+    // feeds in Misskey, and find-my-way routes `*.rss`-suffixed segments to
+    // them no matter what `Accept` says. `/@{acct}` would swallow them, so
+    // they must be rejected instead of forwarded.
+    for path in [
+        "/@alice.rss",
+        "/@alice.atom",
+        "/@alice.json",
+        "/@alice%2erss",
+        "/@alice%2eatom",
+        "/@alice%2ejson",
+        "/@%61lice%2ejson",
+    ] {
+        assert_eq!(
+            get(&app, path, &[AP_ACCEPT]).await.status(),
+            StatusCode::NOT_FOUND,
+            "{path} must be rejected, not forwarded"
+        );
+    }
+
+    // The AP acct route itself still goes through: plain handles, remote
+    // accts, non-feed dotted handles, and escaped reserved characters that
+    // find-my-way never decodes into path structure.
+    for path in [
+        "/@alice",
+        "/@alice@remote.example",
+        "/@alice.RSS",
+        "/@alice%2Frss",
+    ] {
+        assert_eq!(
+            get(&app, path, &[AP_ACCEPT]).await.status(),
+            StatusCode::OK,
+            "{path} must still be forwarded"
+        );
+    }
+}
+
+#[tokio::test]
+async fn internal_referer_does_not_redirect_non_media_paths() {
+    let app = build_app().await;
+
+    // The media redirect is a bandwidth optimization for four media routes;
+    // it must not leak onto the 404 fallback, where a spoofed internal
+    // Referer would otherwise turn any unknown path into a 302 to the
+    // internal host (and disclose it) instead of a 404.
+    let resp = get(
+        &app,
+        "/api/meta",
+        &[("referer", "https://caller.internal.example.ts.net/")],
+    )
+    .await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::NOT_FOUND,
+        "the media redirect must not apply to the fallback"
+    );
+}

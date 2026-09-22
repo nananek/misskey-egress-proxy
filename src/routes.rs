@@ -9,6 +9,7 @@ use axum::routing::{get, post};
 
 use crate::accept_gate::force_ap_accept;
 use crate::config::Config;
+use crate::feed_routes::reject_feed_paths;
 use crate::media_redirect::redirect_internal_referer;
 use crate::proxy::{ProxyState, forward};
 
@@ -18,23 +19,30 @@ use crate::proxy::{ProxyState, forward};
 /// these, paths is here (with citations into Misskey's own source).
 pub fn build(proxy_state: ProxyState, config: Arc<Config>) -> Router {
     // `/files/*` and `/proxy/*`: media, gated on an internal-Referer redirect.
+    // `route_layer`, not `layer`: the redirect is scoped to these four
+    // routes and must not run on the 404 fallback, or a spoofed internal
+    // Referer would turn every unknown path into a 302 to the internal host
+    // instead of a 404.
     let media = Router::new()
         .route("/files/app-default.jpg", get(forward))
         .route("/files/{key}", get(forward))
         .route("/files/{key}/{*rest}", get(forward))
         .route("/proxy/{*rest}", get(forward))
-        .layer(middleware::from_fn_with_state(
+        .route_layer(middleware::from_fn_with_state(
             config,
             redirect_internal_referer,
         ));
 
     // The three dual-purpose (AP-or-HTML) paths: `Accept` is rewritten to
-    // AP JSON, so Misskey never picks its HTML branch for a public caller.
+    // AP JSON and the client-only feed twins of `/@{acct}` are rejected, so
+    // Misskey never picks a non-AP branch for a public caller. `route_layer`
+    // for the same fallback-scoping reason as above.
     let gated = Router::new()
         .route("/notes/{note}", get(forward))
         .route("/users/{user}", get(forward))
         .route("/@{acct}", get(forward))
-        .layer(middleware::from_fn(force_ap_accept));
+        .route_layer(middleware::from_fn(force_ap_accept))
+        .route_layer(middleware::from_fn(reject_feed_paths));
 
     // Everything else: unconditionally AP-only in Misskey itself, so no
     // extra gating is needed here.
