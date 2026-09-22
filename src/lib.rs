@@ -3,6 +3,7 @@
 
 pub mod accept_gate;
 pub mod config;
+pub mod feed_routes;
 pub mod media_redirect;
 pub mod proxy;
 pub mod routes;

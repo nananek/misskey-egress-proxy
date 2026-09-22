@@ -95,6 +95,25 @@ federation には不要と判断し allowlist から除外した。
 `Accept: */*` や `Accept` 無しで取りに来る連合実装を巻き込んで落とすため、
 上書きに改めた。どうせ書き換えるヘッダで相手を選別する意味は無い。
 
+## `/@:user.{rss,atom,json}`（クライアント専用フィード）の拒否
+
+`ClientServerService.ts` は `/@:user.atom`, `/@:user.rss`, `/@:user.json`
+というクライアント専用のフィード経路を、`apOrHtml` constraint を付けずに
+登録している。find-my-way は静的サフィックス付きパラメータを素の
+パラメータより優先するため、`/@alice.rss` は `Accept` に関係なく AP 経路
+`/@:acct` には到達せず、フィード（RSS/Atom/JSON）が返る。本プロキシの
+`/@{acct}` は1セグメント幅でこれを丸ごと飲み込むので、
+`src/feed_routes.rs` の `reject_feed_paths` ミドルウェアで
+`.rss` / `.atom` / `.json` で終わる `acct` を 404 で止める。
+連合には不要なクライアント機能であり、`/emoji/:path` や
+`/avatar/@:acct` と同じ扱い。
+
+find-my-way はルーティング前に `safeDecodeURI` + `decodeURI` で
+パーセントエンコードを解決する（予約文字 `;/?:@&=+$,#` はパス構造に
+ならないが、それ以外は `%2e` → `.`、`%72` → `r` のようにデコードされる）。
+判定も同じ規則でデコードしてから行うため、`/@alice%2erss` も
+`/@alice.rss` と同じフィードとして拒否される。
+
 ## media の内部リダイレクト特例
 
 `/files/*`, `/proxy/*` は `src/media_redirect.rs` の
@@ -102,3 +121,8 @@ federation には不要と判断し allowlist から除外した。
 `INTERNAL_REFERER_SUFFIX`（例: `.your-tailnet.ts.net`）に一致する場合、
 バイトを中継せず `INTERNAL_BASE_URL` へ 302 リダイレクトする。帯域節約の
 最適化であり、セキュリティ境界ではない。
+
+ミドルウェアは `Router::route_layer` でこの4つの media ルートだけに
+掛けてあり、allowlist 外のパスや 404 フォールバックには掛からない
+（`layer` だとフォールバックまでラップされ、`Referer` を内部に見せかけた
+だけで任意の未知パスが 404 ではなく内部ホストへの 302 になってしまう）。
