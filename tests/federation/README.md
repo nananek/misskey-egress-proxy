@@ -15,21 +15,25 @@ Misskey rather than a from-scratch server.
 ## Running it
 
 ```sh
-cd tests/federation
-docker compose up --build
+./tests/federation/run.sh
 ```
 
-This brings up both instances, seeds an admin account on each, enables
-federation, and runs the full scenario. Watch the `scenario` service's
-output; it ends with either `ALL CHECKS PASSED` or a list of `FAIL` lines
-and a non-zero exit code.
+Builds and starts the stack, seeds an admin account on each instance,
+enables federation, runs the full scenario, prints the seed/scenario logs
+(plus every service's logs on failure), tears everything down, and exits
+with the scenario's own exit code. This is also exactly what CI runs
+([`.github/workflows/ci.yml`](../../.github/workflows/ci.yml), on every
+push/PR to `main` and nightly).
 
-Clean up afterwards (the stack has no host-published ports, so nothing
-conflicts with anything else on your machine, but it does use real disk for
-the Postgres/Misskey volumes):
+For interactive debugging, run the stack manually instead so it's left up
+afterwards:
 
 ```sh
-docker compose down -v
+cd tests/federation
+docker compose up --build   # Ctrl-C when done watching
+docker compose down -v      # clean up (no host ports are published, but
+                             # this does use real disk for the Postgres/
+                             # Misskey volumes until you do)
 ```
 
 ## What it actually proves
@@ -86,6 +90,8 @@ docker compose down -v
 
 ## Layout
 
+- `run.sh` — CI's (and your) entry point: up, wait, log, down, propagate
+  the exit code.
 - `docker-compose.yml` — the whole stack.
 - `config/misskey-{a,b}.yml` — minimal Misskey configs. A listens on a UDS
   (matching production); B listens on a plain TCP port (it's just a

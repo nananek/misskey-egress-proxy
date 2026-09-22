@@ -74,10 +74,12 @@ See `docker-compose.yml` for a production reference layout.
 ## Testing
 
 ```sh
-cargo test                        # allowlist / Accept-gate / redirect logic, no real Misskey needed
-cd tests/federation && docker compose up --build   # two real Misskey instances federating through this proxy
+cargo test                     # allowlist / Accept-gate / redirect logic, no real Misskey needed
+./tests/federation/run.sh      # two real Misskey instances federating through this proxy
 ```
 
 The federation test is the one that actually matters: see
 [`tests/federation/README.md`](tests/federation/README.md) for what it
-proves.
+proves. Both run in CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml))
+on every push/PR to `main`, plus a nightly run of the federation test alone
+to catch drift against `misskey/misskey:latest` itself.
