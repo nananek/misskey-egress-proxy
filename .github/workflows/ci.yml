@@ -53,3 +53,27 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - run: ./tests/federation/run.sh mitra
+
+  # Only on an actual push to main (never PRs, schedule, or manual
+  # dispatch), and only after every test above has passed — this registry
+  # image is meant to be pulled and run as-is, so it should never lag
+  # behind or contradict what CI verified.
+  publish:
+    name: publish image to GHCR
+    runs-on: ubuntu-latest
+    needs: [test, federation-misskey, federation-mitra]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v7
+      - name: Log in to GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+      - name: Build and push
+        run: |
+          docker buildx build \
+            --push \
+            -t "ghcr.io/${{ github.repository }}:latest" \
+            -t "ghcr.io/${{ github.repository }}:sha-${{ github.sha }}" \
+            .

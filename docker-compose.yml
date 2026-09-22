@@ -7,11 +7,14 @@
 # this proxy (see README.md for the full architecture). Wire `misskey-uds`
 # up as whatever volume your Misskey container already writes its socket
 # into.
+#
+# Pulls the image CI publishes to GHCR on every push to main
+# (.github/workflows/ci.yml) rather than building from source — swap in
+# `build: .` instead of `image:` if you want to build locally.
 
 services:
   misskey-egress-proxy:
-    build: .
-    image: misskey-egress-proxy:latest
+    image: ghcr.io/nananek/misskey-egress-proxy:latest
     restart: unless-stopped
     environment:
       LISTEN_ADDR: "0.0.0.0:8080"

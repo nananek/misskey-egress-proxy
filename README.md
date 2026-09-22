@@ -71,6 +71,18 @@ All via environment variables (see `src/config.rs`):
 
 See `docker-compose.yml` for a production reference layout.
 
+## Image
+
+CI publishes a built image to GHCR on every push to `main`, after every
+test in `ci.yml` passes:
+
+```sh
+docker pull ghcr.io/nananek/misskey-egress-proxy:latest
+```
+
+Also tagged `sha-<commit>` for pinning to an exact build. Build locally
+instead with `docker build .` (see `Dockerfile`) if you'd rather not pull.
+
 ## Testing
 
 ```sh
