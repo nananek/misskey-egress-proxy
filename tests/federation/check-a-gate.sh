@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 #
 # Generic checks against instance A's public surface: allowlist / Accept
-# gate / media redirect. None of this is peer-specific — it only exercises
+# rewriting / media redirect. None of this is peer-specific — it only exercises
 # misskey-a's own public HTTPS endpoint directly — so every peer's
 # scenario.sh sources this at the end instead of duplicating it.
 #
@@ -53,27 +53,33 @@ for path in \
 done
 
 ##
-## Accept-header gate on the dual-purpose note path.
+## Accept rewriting on the dual-purpose note path: whatever the caller asks
+## for, a real AP Note comes back and Misskey's HTML branch stays out of
+## reach. `-` stands for "send no Accept header at all".
 ##
 if [ -n "$gate_note_id" ]; then
-	note "checking Accept-header gate on /notes/${gate_note_id}"
-	status="$(call GET "https://misskey-a/notes/${gate_note_id}")"
-	[ "$status" = "406" ] && ok "/notes/${gate_note_id} with no Accept -> 406" || bad "/notes/${gate_note_id} with no Accept -> HTTP ${status}, expected 406"
+	note "checking that /notes/${gate_note_id} always answers with AP JSON"
+	for accept in "-" "text/html" "*/*" "text/html,application/xhtml+xml" "application/activity+json"; do
+		if [ "$accept" = "-" ]; then
+			label="no Accept"
+			status="$(call GET "https://misskey-a/notes/${gate_note_id}")"
+		else
+			label="Accept: ${accept}"
+			status="$(call GET "https://misskey-a/notes/${gate_note_id}" -H "Accept: ${accept}")"
+		fi
 
-	status="$(call GET "https://misskey-a/notes/${gate_note_id}" -H 'Accept: text/html')"
-	[ "$status" = "406" ] && ok "/notes/${gate_note_id} with Accept: text/html -> 406" || bad "/notes/${gate_note_id} with Accept: text/html -> HTTP ${status}, expected 406"
+		if [ "$status" != "200" ]; then
+			bad "/notes/${gate_note_id} with ${label} -> HTTP ${status}, expected 200"
+			continue
+		fi
 
-	status="$(call GET "https://misskey-a/notes/${gate_note_id}" -H 'Accept: application/activity+json')"
-	if [ "$status" = "200" ]; then
 		note_type="$(jq -r '.type // empty' "$BODY_FILE")"
 		if [ "$note_type" = "Note" ]; then
-			ok "/notes/${gate_note_id} with AP Accept -> 200 with a real AP Note object"
+			ok "/notes/${gate_note_id} with ${label} -> 200 with a real AP Note object"
 		else
-			bad "/notes/${gate_note_id} with AP Accept -> 200 but body doesn't look like an AP Note: $(cat "$BODY_FILE")"
+			bad "/notes/${gate_note_id} with ${label} -> 200 but body doesn't look like an AP Note: $(head -c 200 "$BODY_FILE")"
 		fi
-	else
-		bad "/notes/${gate_note_id} with AP Accept -> HTTP ${status}, expected 200"
-	fi
+	done
 fi
 
 ##

@@ -91,9 +91,10 @@ exercises instance A's own public surface and doesn't care who the peer is:
    `/oauth/*`, `/healthz`, the well-known client-only paths, `/url`, the
    web client SPA, the `/emoji/*` and `/avatar/*` shorthands — returns
    404 from the public side**, no matter how plausible it looks.
-5. **The `Accept` gate on `/notes/:id`** (one of the three dual-purpose
-   paths): no `Accept`, or `Accept: text/html`, gets 406; an explicit
-   `Accept: application/activity+json` gets a real AP `Note` object back.
+5. **`Accept` rewriting on `/notes/:id`** (one of the three dual-purpose
+   paths): no `Accept`, `Accept: text/html`, `*/*` and an explicit
+   `Accept: application/activity+json` all get the same real AP `Note`
+   object back — Misskey's HTML branch is never reachable from outside.
 6. **Media**: `/files/app-default.jpg` is forwarded through to Misskey
    for an external caller (not blocked — see note below on this specific
    path's own 500), and the same request with an internal-looking
