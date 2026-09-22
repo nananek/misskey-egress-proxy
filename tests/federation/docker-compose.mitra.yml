@@ -1,0 +1,77 @@
+# SPDX-FileCopyrightText: misskey-egress-proxy contributors
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# Peer overlay: Mitra (https://codeberg.org/silverpill/mitra), a real,
+# independent Rust ActivityPub server acting as a remote federation peer.
+# Unlike the misskey overlay, this exercises the proxy against a genuinely
+# different implementation's HTTP client — different signature/request
+# shapes than Misskey talking to itself. Use with the base compose file:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.mitra.yml up --build
+#
+# or ./run.sh mitra.
+#
+# Image: fjox/mitra (a maintained community build of the upstream Mitra
+# project; the image nananek/sakurasato's own compose references,
+# bleakfuture0/mitra, is no longer publicly pullable).
+
+services:
+  certs:
+    environment:
+      CERT_DOMAINS: "misskey-a,mitra"
+
+  postgres-mitra:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_DB: mitra
+      POSTGRES_USER: mitra
+      POSTGRES_PASSWORD: testpass
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mitra"]
+      interval: 3s
+      retries: 30
+
+  mitra-app:
+    image: fjox/mitra:latest
+    entrypoint: ["/custom-entrypoint.sh"]
+    environment:
+      CONFIG_PATH: /etc/mitra/config.yaml
+    volumes:
+      - ./mitra/mitra-config.yaml:/etc/mitra/config.yaml:ro
+      - ./mitra/mitra-entrypoint.sh:/custom-entrypoint.sh:ro
+      - certs:/certs:ro
+      - mitra-storage:/var/lib/mitra
+    depends_on:
+      postgres-mitra:
+        condition: service_healthy
+      certs:
+        condition: service_completed_successfully
+
+  mitra:
+    image: nginx:alpine
+    volumes:
+      - ./mitra/nginx-mitra.conf:/etc/nginx/nginx.conf:ro
+      - certs:/certs:ro
+    depends_on:
+      - mitra-app
+
+  # No separate seed-mitra: mitra-entrypoint.sh already creates the `bob`
+  # account on boot, and scenario.sh's own OAuth token acquisition retries
+  # until Mitra is actually ready to answer.
+  scenario:
+    image: alpine:3.21
+    command: sh -c "apk add --no-cache curl jq >/dev/null && /scenario.sh"
+    volumes:
+      - ./lib.sh:/lib.sh:ro
+      - ./check-a-gate.sh:/check-a-gate.sh:ro
+      - ./mitra/scenario.sh:/scenario.sh:ro
+      - misskey-a-socket:/run/misskey-a:ro
+      - tokens:/tokens
+    depends_on:
+      seed-a:
+        condition: service_completed_successfully
+      mitra:
+        condition: service_started
+
+volumes:
+  mitra-storage:

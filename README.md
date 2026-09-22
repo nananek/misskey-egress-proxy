@@ -74,12 +74,17 @@ See `docker-compose.yml` for a production reference layout.
 ## Testing
 
 ```sh
-cargo test                     # allowlist / Accept-gate / redirect logic, no real Misskey needed
-./tests/federation/run.sh      # two real Misskey instances federating through this proxy
+cargo test                          # allowlist / Accept-gate / redirect logic, no real Misskey needed
+./tests/federation/run.sh misskey   # real Misskey <-> proxy <-> Misskey
+./tests/federation/run.sh mitra     # real Mitra <-> proxy <-> Misskey (independent implementation)
+./tests/federation/run.sh fedibird  # real Fedibird <-> proxy <-> Misskey (manual only, see below)
 ```
 
-The federation test is the one that actually matters: see
-[`tests/federation/README.md`](tests/federation/README.md) for what it
-proves. Both run in CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml))
-on every push/PR to `main`, plus a nightly run of the federation test alone
-to catch drift against `misskey/misskey:latest` itself.
+The federation tests are what actually matter: see
+[`tests/federation/README.md`](tests/federation/README.md) for what each
+one proves. `cargo test`, `misskey`, and `mitra` all run in CI
+([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) on every push/PR
+to `main`, plus nightly to catch drift against the real images themselves.
+`fedibird` has no prebuilt image and takes 30+ minutes to build from
+source, so it's manual-only
+([`.github/workflows/federation-fedibird.yml`](.github/workflows/federation-fedibird.yml)).

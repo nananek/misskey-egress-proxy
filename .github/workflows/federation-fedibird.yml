@@ -1,0 +1,26 @@
+# SPDX-FileCopyrightText: misskey-egress-proxy contributors
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# Manual-only, deliberately not on push/pull_request/schedule: Fedibird has
+# no prebuilt image, so this builds a full Mastodon fork from source on
+# every run (30+ minutes, no cache). See docker-compose.fedibird.yml and
+# tests/federation/README.md for details, including that this specific
+# peer has not been run end to end while building this project — treat a
+# manual run as the real first test of it.
+
+name: Federation Test (Fedibird)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  federation-fedibird:
+    name: federation test (Misskey + real Fedibird)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+      - run: ./tests/federation/run.sh fedibird

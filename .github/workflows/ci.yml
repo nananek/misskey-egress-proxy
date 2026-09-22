@@ -16,9 +16,9 @@ on:
       - "docs/**"
   workflow_dispatch:
   schedule:
-    # Catches drift against `misskey/misskey:latest` itself (a route this
-    # proxy relies on moving, disappearing, or changing shape), not just
-    # changes to this repo.
+    # Catches drift against misskey/misskey:latest and fjox/mitra:latest
+    # themselves (routes this proxy relies on moving, disappearing, or
+    # changing shape), not just changes to this repo.
     - cron: "0 20 * * *"
 
 concurrency:
@@ -38,10 +38,18 @@ jobs:
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test
 
-  federation:
+  federation-misskey:
     name: federation test (real Misskey x2)
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
-      - run: ./tests/federation/run.sh
+      - run: ./tests/federation/run.sh misskey
+
+  federation-mitra:
+    name: federation test (Misskey + real Mitra)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - run: ./tests/federation/run.sh mitra

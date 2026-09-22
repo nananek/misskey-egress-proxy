@@ -1,0 +1,36 @@
+# SPDX-FileCopyrightText: misskey-egress-proxy contributors
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# Mitra config for the federation test. Based on nananek/sakurasato's own
+# mitra-federation test config (compose/federation-test/mitra-federation/
+# mitra-config.yaml), pointed at this project's own postgres-mitra/mitra
+# hostnames.
+
+database_url: postgres://mitra:testpass@postgres-mitra:5432/mitra
+
+storage_dir: /var/lib/mitra
+web_client_dir: /var/lib/mitra/www
+
+http_host: '0.0.0.0'
+http_port: 8383
+
+instance_uri: https://mitra
+instance_title: "Mitra Test"
+instance_short_description: "Federation test instance"
+instance_description: "Mitra federation test instance for misskey-egress-proxy"
+instance_timeline_public: true
+
+registration:
+  type: open
+  default_role: user
+
+federation:
+  enabled: true
+  # Test-only: this whole "federation" runs on a private Docker subnet,
+  # which Mitra's own SSRF guard would otherwise refuse to call. NEVER set
+  # this in production.
+  ssrf_protection_enabled: false
+
+retention:
+  extraneous_posts: 50
+  empty_profiles: 150

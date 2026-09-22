@@ -24,8 +24,13 @@ fulltextSearch:
 
 id: 'aidx'
 
-# Test-only: this whole "federation" is two containers on a private Docker
-# subnet, and Misskey's SSRF guard refuses outbound requests to private IPs
-# by default. NEVER set this in production.
+# Test-only: this whole "federation" runs on a private Docker subnet, and
+# Misskey's SSRF guard refuses outbound requests to private IPs by default.
+# Standard private ranges rather than one pinned subnet, so this doesn't
+# care which subnet Docker actually assigns (same list sakurasato itself
+# uses for this exact situation). NEVER set this in production.
 allowedPrivateNetworks:
-  - '172.30.0.0/16'
+  - '127.0.0.0/8'
+  - '10.0.0.0/8'
+  - '172.16.0.0/12'
+  - '192.168.0.0/16'
