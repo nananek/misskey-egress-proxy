@@ -14,6 +14,7 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use axum::Router;
@@ -65,14 +66,19 @@ async fn echo_path(req: Request<Body>) -> Response {
     (StatusCode::OK, [("x-mock-path", path)], "mock-backend").into_response()
 }
 
+/// Tests run in parallel, and two of them can read the same nanosecond off
+/// the clock, so the timestamp alone does not make the path unique.
 fn unique_suffix() -> String {
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+
     format!(
-        "{}-{}",
+        "{}-{}-{}",
         std::process::id(),
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
-            .as_nanos()
+            .as_nanos(),
+        COUNTER.fetch_add(1, Ordering::Relaxed)
     )
 }
 
