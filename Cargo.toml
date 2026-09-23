@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 axum = "0.8.9"
+http-body-util = "0.1.5"
 hyper = { version = "1.11.1", features = ["full"] }
 hyper-util = { version = "0.1.20", features = ["full"] }
 hyperlocal = "0.9.1"

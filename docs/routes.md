@@ -11,7 +11,9 @@
 `/` と `/assets/misskey.svg` は案内ページとしてプロキシ自身が返す静的コンテンツで、
 Misskey UDS へは転送しない。既定版はバイナリとコンテナイメージに同梱し、
 `STATIC_DIR`（既定 `/usr/local/share/misskey-egress-proxy`）への bind mount で
-差し替えられる。以下は Misskey へ転送するルートの一覧。
+差し替えられる。どちらも CSP 付きで返し（`/` は `default-src 'none'`、
+SVG はそれに `sandbox` を加えたもの）、差し替えファイルが公開オリジンで
+スクリプトを実行できないようにする。以下は Misskey へ転送するルートの一覧。
 
 | パス | メソッド | 出典 | 備考 |
 |---|---|---|---|

@@ -228,6 +228,14 @@ async fn root_serves_the_bundled_landing_page() {
         logo.headers().get("content-type").unwrap(),
         "image/svg+xml; charset=utf-8"
     );
+    let csp = logo
+        .headers()
+        .get("content-security-policy")
+        .expect("the SVG must carry a CSP too: an SVG opened directly is an active document")
+        .to_str()
+        .unwrap();
+    assert!(csp.contains("default-src 'none'"), "{csp}");
+    assert!(csp.contains("sandbox"), "{csp}");
 }
 
 #[tokio::test]
@@ -235,11 +243,16 @@ async fn mounted_static_files_override_the_bundled_page() {
     let static_dir = std::env::temp_dir().join(format!("mep-static-{}", unique_suffix()));
     std::fs::create_dir(&static_dir).unwrap();
     std::fs::write(static_dir.join("index.html"), "<h1>mounted page</h1>").unwrap();
+    std::fs::write(static_dir.join("misskey.svg"), "<svg>mounted</svg>").unwrap();
 
     let app = build_app_with_static_dir(static_dir.clone()).await;
     let resp = get(&app, "/", &[]).await;
     let body = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
     assert_eq!(body.as_ref(), b"<h1>mounted page</h1>");
+
+    let logo = get(&app, "/assets/misskey.svg", &[]).await;
+    let body = to_bytes(logo.into_body(), usize::MAX).await.unwrap();
+    assert_eq!(body.as_ref(), b"<svg>mounted</svg>");
 
     std::fs::remove_dir_all(static_dir).unwrap();
 }

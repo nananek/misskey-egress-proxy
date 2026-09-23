@@ -58,11 +58,20 @@ async fn index(static_dir: PathBuf) -> Response {
 
 /// Misskey's official wordmark, vendored from
 /// `packages/frontend/assets/misskey.svg` in misskey-dev/misskey.
+///
+/// Carries a CSP like the index page does: `STATIC_DIR` lets an operator
+/// replace this file at runtime, and an SVG opened directly is an active
+/// document, not just an image. `default-src 'none'` plus `sandbox` keep a
+/// replacement file from running script on this origin.
 async fn misskey_logo(static_dir: PathBuf) -> Response {
     let body = read_override(&static_dir, "misskey.svg", MISSKEY_LOGO).await;
     (
         [
             (header::CONTENT_TYPE, "image/svg+xml; charset=utf-8"),
+            (
+                header::CONTENT_SECURITY_POLICY,
+                "default-src 'none'; style-src 'unsafe-inline'; sandbox",
+            ),
             (header::CACHE_CONTROL, "public, max-age=604800"),
             (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
         ],
