@@ -6,6 +6,8 @@ use axum::http::StatusCode;
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 
+use crate::reject;
+
 /// Misskey serves client-only feeds at `/@:user.rss`, `/@:user.atom`, and
 /// `/@:user.json` (`ClientServerService.ts`), registered without the
 /// `apOrHtml` constraint. find-my-way prefers a parameter with a static
@@ -25,6 +27,7 @@ use axum::response::{IntoResponse, Response};
 /// matching find-my-way's double-decode guard.
 pub async fn reject_feed_paths(req: Request, next: Next) -> Response {
     if is_feed_path(req.uri().path()) {
+        reject::drain_body(req.into_body()).await;
         return StatusCode::NOT_FOUND.into_response();
     }
     next.run(req).await

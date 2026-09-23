@@ -153,3 +153,70 @@ fn refuses_to_clobber_a_non_socket_path() {
     let _ = std::fs::remove_file(&listen);
     let _ = std::fs::remove_file(&misskey);
 }
+
+/// Issue #3: a rejection must not close the connection while the caller is
+/// still writing the request body. Deterministic form: a chunked body with
+/// no terminal chunk yet — the proxy must stay quiet until the body is
+/// complete, then answer with the real status.
+#[test]
+fn rejections_wait_for_the_request_body_before_answering() {
+    let misskey = unique_path("misskey");
+    let listen = unique_path("egress");
+    spawn_mock_misskey(&misskey);
+    let mut proxy = spawn_proxy(&listen, &misskey);
+    wait_until_connectable(&listen);
+
+    for (method, path, expected) in [
+        ("POST", "/api/meta", "HTTP/1.1 404 Not Found"),
+        (
+            "POST",
+            "/.well-known/nodeinfo",
+            "HTTP/1.1 405 Method Not Allowed",
+        ),
+        ("GET", "/@alice.rss", "HTTP/1.1 404 Not Found"),
+    ] {
+        let mut stream = UnixStream::connect(&listen).expect("connect");
+        stream
+            .write_all(
+                format!(
+                    "{method} {path} HTTP/1.1\r\nHost: test\r\nContent-Type: application/json\r\nConnection: close\r\nTransfer-Encoding: chunked\r\n\r\n"
+                )
+                .as_bytes(),
+            )
+            .expect("write request head");
+        stream
+            .write_all(b"7\r\n{\"a\":1}\r\n")
+            .expect("write one chunk");
+
+        // No terminal chunk yet: the proxy must be waiting on the body, not
+        // answering and closing.
+        stream
+            .set_read_timeout(Some(Duration::from_millis(300)))
+            .unwrap();
+        let mut buf = [0u8; 64];
+        match stream.read(&mut buf) {
+            Err(e)
+                if e.kind() == std::io::ErrorKind::WouldBlock
+                    || e.kind() == std::io::ErrorKind::TimedOut => {}
+            Ok(0) => panic!("{method} {path}: closed before the body was complete"),
+            Ok(n) => panic!(
+                "{method} {path}: answered {:?} before the body was complete",
+                String::from_utf8_lossy(&buf[..n])
+            ),
+            Err(e) => panic!("{method} {path}: unexpected read error: {e}"),
+        }
+
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        stream.write_all(b"0\r\n\r\n").expect("terminate the body");
+        let mut response = String::new();
+        stream.read_to_string(&mut response).expect("read response");
+        assert!(
+            response.starts_with(expected),
+            "{method} {path}: expected {expected}, got {response}"
+        );
+    }
+
+    cleanup(&mut proxy, &listen, &misskey);
+}

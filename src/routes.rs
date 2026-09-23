@@ -13,6 +13,7 @@ use crate::feed_routes::reject_feed_paths;
 use crate::home;
 use crate::media_redirect::redirect_internal_referer;
 use crate::proxy::{ProxyState, forward};
+use crate::reject;
 
 /// The entire public surface, in one place. The two landing-page routes are
 /// served locally; every other registered path is allowed through to
@@ -80,5 +81,10 @@ pub fn build(proxy_state: ProxyState, config: Arc<Config>) -> Router {
         .merge(plain)
         .merge(gated)
         .merge(media)
+        // Rejections drain the request body before answering, so a caller
+        // that is still writing its body sees the 404/405 instead of the
+        // connection dying under it. See `src/reject.rs`.
+        .fallback(reject::not_found)
+        .method_not_allowed_fallback(reject::method_not_allowed)
         .with_state(proxy_state)
 }
