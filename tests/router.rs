@@ -18,7 +18,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use axum::Router;
-use axum::body::Body;
+use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::any;
@@ -94,19 +94,24 @@ fn unique_suffix() -> String {
     )
 }
 
-async fn build_app() -> Router {
+async fn build_app_with_static_dir(static_dir: PathBuf) -> Router {
     let socket = spawn_mock_backend().await;
     let config = Arc::new(Config {
         listen: ListenTarget::Tcp("127.0.0.1:0".to_string()),
         misskey_socket: socket.clone(),
         internal_base_url: INTERNAL_BASE_URL.to_string(),
         internal_referer_suffix: INTERNAL_SUFFIX.to_string(),
+        static_dir,
     });
     let proxy_state = ProxyState {
         client: build_client(),
         socket,
     };
     routes::build(proxy_state, config)
+}
+
+async fn build_app() -> Router {
+    build_app_with_static_dir(PathBuf::from("/path/that/does/not/exist")).await
 }
 
 async fn call(app: &Router, method: &str, path: &str, headers: &[(&str, &str)]) -> Response {
@@ -187,7 +192,6 @@ async fn client_and_admin_surface_is_not_reachable() {
         "/url?url=https://example.com",
         "/manifest.json",
         "/robots.txt",
-        "/",
         "/settings",
         "/emoji/blobcat.webp",
         "/avatar/@alice",
@@ -199,6 +203,45 @@ async fn client_and_admin_surface_is_not_reachable() {
             "path {path} must not be publicly reachable"
         );
     }
+}
+
+#[tokio::test]
+async fn root_serves_the_bundled_landing_page() {
+    let app = build_app().await;
+
+    let resp = get(&app, "/", &[]).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(
+        resp.headers().get("content-type").unwrap(),
+        "text/html; charset=utf-8"
+    );
+    assert!(resp.headers().contains_key("content-security-policy"));
+    let body = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+    assert!(
+        String::from_utf8_lossy(&body).contains("misskey-egress-proxy"),
+        "the root should contain the project landing page"
+    );
+
+    let logo = get(&app, "/assets/misskey.svg", &[]).await;
+    assert_eq!(logo.status(), StatusCode::OK);
+    assert_eq!(
+        logo.headers().get("content-type").unwrap(),
+        "image/svg+xml; charset=utf-8"
+    );
+}
+
+#[tokio::test]
+async fn mounted_static_files_override_the_bundled_page() {
+    let static_dir = std::env::temp_dir().join(format!("mep-static-{}", unique_suffix()));
+    std::fs::create_dir(&static_dir).unwrap();
+    std::fs::write(static_dir.join("index.html"), "<h1>mounted page</h1>").unwrap();
+
+    let app = build_app_with_static_dir(static_dir.clone()).await;
+    let resp = get(&app, "/", &[]).await;
+    let body = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+    assert_eq!(body.as_ref(), b"<h1>mounted page</h1>");
+
+    std::fs::remove_dir_all(static_dir).unwrap();
 }
 
 #[tokio::test]
