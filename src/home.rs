@@ -4,9 +4,12 @@
 use std::path::{Path, PathBuf};
 
 use axum::Router;
+use axum::extract::Request;
 use axum::http::header;
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
+
+use crate::reject;
 
 const INDEX_HTML: &str = include_str!("../static/index.html");
 const MISSKEY_LOGO: &[u8] = include_bytes!("../static/misskey.svg");
@@ -24,16 +27,24 @@ where
     Router::new()
         .route(
             "/",
-            get(move || {
+            get(move |req: Request| {
                 let dir = index_dir.clone();
-                async move { index(dir).await }
+                async move {
+                    // A caller still writing a body must not see the
+                    // connection die under it; see `src/reject.rs`.
+                    reject::drain_body(req.into_body()).await;
+                    index(dir).await
+                }
             }),
         )
         .route(
             "/assets/misskey.svg",
-            get(move || {
+            get(move |req: Request| {
                 let dir = logo_dir.clone();
-                async move { misskey_logo(dir).await }
+                async move {
+                    reject::drain_body(req.into_body()).await;
+                    misskey_logo(dir).await
+                }
             }),
         )
 }

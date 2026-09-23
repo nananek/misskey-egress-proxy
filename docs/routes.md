@@ -113,7 +113,12 @@ federation には不要と判断し allowlist から除外した。
 `src/feed_routes.rs` の `reject_feed_paths` ミドルウェアで
 `.rss` / `.atom` / `.json` で終わる `acct` を 404 で止める。
 連合には不要なクライアント機能であり、`/emoji/:path` や
-`/avatar/@:acct` と同じ扱い。
+`/avatar/@:acct` と同じ扱い。405 用ハンドラを先に設置してから
+ルーター全体を `layer` で包むため、GET だけでなくどのメソッドでも
+同じ 404 になる（`Router::method_not_allowed_fallback` はルートの
+デフォルトフォールバックを置き換えるので、逆順だと `route_layer` 済みの
+フォールバックごと差し替わり、`/@alice.rss` への POST だけ 405 になって
+いた）。
 
 find-my-way はルーティング前に `safeDecodeURI` + `decodeURI` で
 パーセントエンコードを解決する（予約文字 `;/?:@&=+$,#` はパス構造に

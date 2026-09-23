@@ -94,6 +94,24 @@ in the official Misskey repository.
 
 See `docker-compose.yml` for a production reference layout.
 
+## Deployment notes
+
+- **Timeouts and connection limits are the terminator's job.** This
+  process has none of its own, by design — cloudflared/Caddy should
+  provide request timeouts and concurrency limits. The one bound inside
+  the proxy is the rejection drain: a rejected request reads at most
+  1 MiB of its body, for at most 10s, before the 404/405 goes out
+  (`src/reject.rs`).
+- **Replace, don't append, `X-Forwarded-For`** in the terminator. The
+  proxy forwards client headers verbatim, and Misskey's default
+  `trustProxy` derives `request.ip` from `X-Forwarded-For`, so an
+  appending terminator lets a caller pick the IP Misskey records. Today
+  only `/api/*` and sign-in rate limits consume it — none reachable
+  through this proxy — but replacing the header is the safe setting.
+- **Keep `allowedPrivateNetworks` unset in Misskey.** `/proxy/*` is
+  public by design (federation needs remote media), and Misskey's own
+  SSRF guard is what keeps it from fetching private addresses.
+
 ## Image
 
 CI publishes a built image to GHCR on every push to `main`, after every

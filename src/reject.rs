@@ -32,10 +32,14 @@ const DRAIN_TIMEOUT: Duration = Duration::from_secs(10);
 ///
 /// Bounded in both bytes and time, and streamed frame by frame rather than
 /// buffered: a rejected path must not be a memory sink or an open-ended
-/// read. A body that hits either bound is left unfinished and the
-/// connection closes as it did before the drain existed, which only affects
-/// callers sending more at a blocked path than a blocked path should ever
-/// see.
+/// read. The byte bound counts decoded body bytes, not wire bytes — a body
+/// split into tiny chunks with long chunk extensions makes the proxy read
+/// more than `DRAIN_LIMIT` off the socket (hyper's per-line buffer, ~400
+/// KiB, caps the overhead per chunk header) — so the wall-clock bound is
+/// what caps that case. A body that hits any bound is left unfinished and
+/// the connection closes as it did before the drain existed, which only
+/// affects callers sending more at a blocked path than a blocked path
+/// should ever see.
 pub async fn drain_body(body: Body) {
     drain_within(body, DRAIN_LIMIT, DRAIN_TIMEOUT).await;
 }

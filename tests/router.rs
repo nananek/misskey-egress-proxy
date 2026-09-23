@@ -380,6 +380,18 @@ async fn client_feed_twins_of_the_acct_path_are_not_reachable() {
             "{path} must still be forwarded"
         );
     }
+
+    // And the rejection applies to every method, not just GET: installing
+    // the draining 405 handler after the feed layer used to replace the
+    // layer-wrapped fallback, so a POST to a feed twin answered 405 while a
+    // GET answered 404.
+    assert_eq!(
+        call(&app, "POST", "/@alice.rss", &[AP_ACCEPT])
+            .await
+            .status(),
+        StatusCode::NOT_FOUND,
+        "a feed twin must be 404 for POST as well"
+    );
 }
 
 #[tokio::test]

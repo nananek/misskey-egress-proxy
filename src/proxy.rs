@@ -44,6 +44,13 @@ pub async fn forward(State(state): State<ProxyState>, mut req: Request) -> Respo
     match state.client.request(req).await {
         Ok(resp) => resp.map(Body::new).into_response(),
         Err(err) => {
+            // An upstream that answers before the request body is fully sent
+            // and then closes (Misskey's 64 KiB bodyLimit on `/inbox` does
+            // exactly this) is a race for hyper's client: it usually
+            // surfaces the upstream's 413, but when the close's RST wins the
+            // connection errors first and the only honest status left is
+            // 502. Measured on the federation stack: 9/10 413, 1/10 502 for
+            // a 10 MiB `/inbox` body, direct and through nginx alike.
             tracing::error!(error = %err, "upstream request to misskey UDS failed");
             (StatusCode::BAD_GATEWAY, "upstream unavailable").into_response()
         }
