@@ -43,9 +43,13 @@ pub async fn redirect_internal_referer(
     let path_and_query = req
         .uri()
         .path_and_query()
-        .map(|pq| pq.as_str())
-        .unwrap_or("/");
+        .map(|pq| pq.as_str().to_string())
+        .unwrap_or_else(|| "/".to_string());
     let target = format!("{}{}", config.internal_base_url, path_and_query);
+
+    // A caller still writing a body would otherwise see the connection die
+    // under it when this response closes the request; see `src/reject.rs`.
+    crate::reject::drain_body(req.into_body()).await;
 
     Response::builder()
         .status(StatusCode::FOUND)

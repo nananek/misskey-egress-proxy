@@ -166,20 +166,31 @@ fn rejections_wait_for_the_request_body_before_answering() {
     let mut proxy = spawn_proxy(&listen, &misskey);
     wait_until_connectable(&listen);
 
-    for (method, path, expected) in [
-        ("POST", "/api/meta", "HTTP/1.1 404 Not Found"),
+    for (method, path, extra_headers, expected) in [
+        ("POST", "/api/meta", "", "HTTP/1.1 404 Not Found"),
         (
             "POST",
             "/.well-known/nodeinfo",
+            "",
             "HTTP/1.1 405 Method Not Allowed",
         ),
-        ("GET", "/@alice.rss", "HTTP/1.1 404 Not Found"),
+        ("GET", "/@alice.rss", "", "HTTP/1.1 404 Not Found"),
+        // The media redirect and the landing page drain too: a GET carrying
+        // a body must not be cut off by their non-rejection responses.
+        (
+            "GET",
+            "/files/x",
+            "Referer: https://caller.internal.example.ts.net/\r\n",
+            "HTTP/1.1 302 Found",
+        ),
+        ("GET", "/", "", "HTTP/1.1 200 OK"),
+        ("GET", "/assets/misskey.svg", "", "HTTP/1.1 200 OK"),
     ] {
         let mut stream = UnixStream::connect(&listen).expect("connect");
         stream
             .write_all(
                 format!(
-                    "{method} {path} HTTP/1.1\r\nHost: test\r\nContent-Type: application/json\r\nConnection: close\r\nTransfer-Encoding: chunked\r\n\r\n"
+                    "{method} {path} HTTP/1.1\r\nHost: test\r\nContent-Type: application/json\r\nConnection: close\r\n{extra_headers}Transfer-Encoding: chunked\r\n\r\n"
                 )
                 .as_bytes(),
             )
