@@ -531,6 +531,7 @@ name = "misskey-egress-proxy"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "http-body",
  "http-body-util",
  "hyper",
  "hyper-util",
