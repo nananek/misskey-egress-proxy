@@ -1,0 +1,299 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#17171c">
+  <meta name="description" content="Misskey の ActivityPub 連合に必要な経路だけを公開する egress gateway です。">
+  <title>Misskey Federation Gateway</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #101014;
+      --surface: rgba(33, 33, 41, .78);
+      --surface-strong: #25252e;
+      --text: #f4f4f6;
+      --muted: #aaaab7;
+      --line: rgba(255, 255, 255, .1);
+      --accent: #a1ca03;
+      --accent-soft: rgba(161, 202, 3, .14);
+      --accent-text: #dcff5c;
+    }
+
+    * { box-sizing: border-box; }
+
+    html { min-height: 100%; }
+
+    body {
+      min-height: 100vh;
+      margin: 0;
+      overflow-x: hidden;
+      color: var(--text);
+      background:
+        radial-gradient(circle at 18% 8%, rgba(161, 202, 3, .13), transparent 30rem),
+        radial-gradient(circle at 88% 82%, rgba(122, 92, 255, .12), transparent 32rem),
+        var(--bg);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.7;
+    }
+
+    body::before {
+      position: fixed;
+      inset: 0;
+      z-index: -1;
+      content: "";
+      opacity: .24;
+      background-image:
+        linear-gradient(rgba(255,255,255,.035) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255,255,255,.035) 1px, transparent 1px);
+      background-size: 48px 48px;
+      mask-image: linear-gradient(to bottom, black, transparent 82%);
+    }
+
+    a { color: inherit; }
+
+    .shell {
+      width: min(1080px, calc(100% - 40px));
+      margin: 0 auto;
+      padding: 34px 0 30px;
+    }
+
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+    }
+
+    .brand {
+      width: 154px;
+      height: auto;
+      display: block;
+    }
+
+    .status {
+      display: inline-flex;
+      align-items: center;
+      gap: 9px;
+      color: var(--muted);
+      font-size: .82rem;
+      letter-spacing: .04em;
+    }
+
+    .status::before {
+      width: 8px;
+      height: 8px;
+      content: "";
+      border-radius: 50%;
+      background: var(--accent);
+      box-shadow: 0 0 0 5px var(--accent-soft), 0 0 18px rgba(161, 202, 3, .55);
+    }
+
+    main {
+      min-height: calc(100vh - 128px);
+      display: grid;
+      align-content: center;
+      padding: 70px 0 90px;
+    }
+
+    .eyebrow {
+      margin: 0 0 22px;
+      color: var(--accent-text);
+      font-size: .76rem;
+      font-weight: 750;
+      letter-spacing: .18em;
+      text-transform: uppercase;
+    }
+
+    h1 {
+      max-width: 860px;
+      margin: 0;
+      font-size: clamp(2.9rem, 8vw, 6.8rem);
+      font-weight: 780;
+      letter-spacing: -.065em;
+      line-height: .94;
+    }
+
+    h1 span {
+      color: transparent;
+      background: linear-gradient(105deg, #fff 12%, #d4f955 58%, #8eb600);
+      background-clip: text;
+      -webkit-background-clip: text;
+    }
+
+    .lede {
+      max-width: 670px;
+      margin: 34px 0 0;
+      color: var(--muted);
+      font-size: clamp(1rem, 2vw, 1.17rem);
+    }
+
+    .lede strong {
+      color: var(--text);
+      font-weight: 650;
+    }
+
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-top: 34px;
+    }
+
+    .button {
+      display: inline-flex;
+      min-height: 48px;
+      align-items: center;
+      gap: 10px;
+      padding: 0 19px;
+      border: 1px solid var(--line);
+      border-radius: 13px;
+      background: rgba(255,255,255,.045);
+      font-size: .92rem;
+      font-weight: 680;
+      text-decoration: none;
+      transition: transform .16s ease, border-color .16s ease, background .16s ease;
+    }
+
+    .button.primary {
+      border-color: var(--accent);
+      color: #161900;
+      background: var(--accent);
+    }
+
+    .button:hover {
+      transform: translateY(-2px);
+      border-color: rgba(255,255,255,.28);
+      background: rgba(255,255,255,.08);
+    }
+
+    .button.primary:hover {
+      border-color: #c7ee2d;
+      background: #b4dc12;
+    }
+
+    .button:focus-visible {
+      outline: 3px solid rgba(212, 249, 85, .5);
+      outline-offset: 3px;
+    }
+
+    .arrow { font-size: 1.15rem; }
+
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 14px;
+      margin-top: 72px;
+    }
+
+    .card {
+      min-height: 176px;
+      padding: 24px;
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      background: var(--surface);
+      box-shadow: 0 24px 70px rgba(0, 0, 0, .18);
+      backdrop-filter: blur(14px);
+    }
+
+    .card-index {
+      display: block;
+      margin-bottom: 20px;
+      color: var(--accent-text);
+      font: 650 .72rem/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+      letter-spacing: .12em;
+    }
+
+    .card h2 {
+      margin: 0 0 8px;
+      font-size: 1.03rem;
+      letter-spacing: -.01em;
+    }
+
+    .card p {
+      margin: 0;
+      color: var(--muted);
+      font-size: .88rem;
+      line-height: 1.65;
+    }
+
+    footer {
+      display: flex;
+      justify-content: space-between;
+      gap: 20px;
+      padding-top: 24px;
+      border-top: 1px solid var(--line);
+      color: #777782;
+      font-size: .75rem;
+    }
+
+    footer p { margin: 0; }
+
+    @media (max-width: 760px) {
+      .shell { width: min(100% - 28px, 1080px); padding-top: 24px; }
+      .brand { width: 132px; }
+      main { padding: 80px 0 64px; }
+      h1 { font-size: clamp(2.8rem, 16vw, 5.2rem); }
+      .cards { grid-template-columns: 1fr; margin-top: 54px; }
+      .card { min-height: auto; }
+      footer { flex-direction: column; gap: 4px; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .button { transition: none; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <header class="topbar">
+      <img class="brand" src="/assets/misskey.svg" width="515" height="136" alt="Misskey">
+      <span class="status">Federation gateway</span>
+    </header>
+
+    <main>
+      <section aria-labelledby="page-title">
+        <p class="eyebrow">Public edge · ActivityPub only</p>
+        <h1 id="page-title">Hello from the<br><span>quiet side.</span></h1>
+        <p class="lede">
+          ここは Misskey の<strong>公開連合ゲートウェイ</strong>です。
+          ActivityPub、WebFinger、NodeInfo と連合先から参照されるメディアだけを公開しています。
+          通常の Misskey Web クライアントは、この URL では提供していません。
+        </p>
+        <nav class="actions" aria-label="関連リンク">
+          <a class="button primary" href="https://github.com/nananek/misskey-egress-proxy">
+            GitHub で仕組みを見る <span class="arrow" aria-hidden="true">↗</span>
+          </a>
+          <a class="button" href="https://github.com/nananek/misskey-egress-proxy/blob/main/docs/routes.md">
+            公開ルート一覧
+          </a>
+        </nav>
+      </section>
+
+      <section class="cards" aria-label="ゲートウェイの特徴">
+        <article class="card">
+          <span class="card-index">01 / FEDERATION</span>
+          <h2>連合はそのまま</h2>
+          <p>Inbox、Outbox、Actor、Note など、ActivityPub に必要な通信を Misskey へ中継します。</p>
+        </article>
+        <article class="card">
+          <span class="card-index">02 / MINIMAL</span>
+          <h2>必要な経路だけ</h2>
+          <p>クライアント API、管理画面、OAuth、ストリーミングは公開せず、固定 allowlist で分離します。</p>
+        </article>
+        <article class="card">
+          <span class="card-index">03 / OPEN SOURCE</span>
+          <h2>構成は公開済み</h2>
+          <p>ルートを選んだ根拠から実装、テストまで、AGPL-3.0-only でリポジトリに公開しています。</p>
+        </article>
+      </section>
+    </main>
+
+    <footer>
+      <p>misskey-egress-proxy</p>
+      <p>Minimal public surface. Full federation.</p>
+    </footer>
+  </div>
+</body>
+</html>

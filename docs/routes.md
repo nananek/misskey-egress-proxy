@@ -8,6 +8,11 @@
 
 ## 許可ルート
 
+`/` と `/assets/misskey.svg` は案内ページとしてプロキシ自身が返す静的コンテンツで、
+Misskey UDS へは転送しない。既定版はバイナリとコンテナイメージに同梱し、
+`STATIC_DIR`（既定 `/usr/local/share/misskey-egress-proxy`）への bind mount で
+差し替えられる。以下は Misskey へ転送するルートの一覧。
+
 | パス | メソッド | 出典 | 備考 |
 |---|---|---|---|
 | `/.well-known/webfinger` | GET, OPTIONS | `WellKnownServerService.ts` | `meta.federation==='none'` で403（Misskey側） |
@@ -75,11 +80,11 @@ federation には不要と判断し allowlist から除外した。
   `/.well-known/change-password` ── クライアント向け。
 - `/url` ── Summaly/OGP リンクプレビュー。未認証かつ SSRF 的リスクがあり、
   Misskey 自身の `robots.txt` も disallow している。federation には不要。
-- Web クライアント SPA 一式（`/`, catch-all `*`, `/manifest.json`,
+- Web クライアント SPA 一式（catch-all `*`, `/manifest.json`,
   `/sw.js`, `/embed.js`, `/robots.txt`, `/opensearch.xml`,
   `/favicon.ico`, `/_info_card_`, `/bios`, `/cli`, `/flush`, `/embed/*`,
   静的アセット）── `ClientServerService.ts` で確認済み、すべてクライアント
-  向け。
+  向け。`/` では Misskey の SPA ではなく、このプロキシ自身の案内ページだけを返す。
 
 ## Accept の上書き（3パスのみ）
 

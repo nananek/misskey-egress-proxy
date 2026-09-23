@@ -42,7 +42,8 @@ citations into Misskey's own source — is in [`docs/routes.md`](docs/routes.md)
   reshape, or cache anything Misskey returns. It matches a request against
   a static route table and either forwards it byte-for-byte (method,
   headers, raw body — this matters for `/inbox`'s HTTP Signature `Digest`)
-  or returns 404.
+  or returns 404. The only local public content is the informational page at
+  `/` and its Misskey wordmark asset.
 - **Two narrow exceptions**, both required for correctness, not policy:
   - Three paths (`/notes/:note`, `/users/:user`, `/@:acct`) serve either
     an ActivityPub JSON object or a full HTML page from Misskey, chosen by
@@ -81,6 +82,15 @@ All via environment variables (see `src/config.rs`):
 | `MISSKEY_SOCKET` | `/run/misskey/misskey.sock` | Misskey's UDS |
 | `INTERNAL_BASE_URL` | `https://misskey.your-tailnet.ts.net` | Redirect target for internal media callers |
 | `INTERNAL_REFERER_SUFFIX` | `.your-tailnet.ts.net` | Hostname suffix that marks a `Referer` as internal |
+| `STATIC_DIR` | `/usr/local/share/misskey-egress-proxy` (default) | Directory containing optional `index.html` and `misskey.svg` overrides for the public landing page |
+
+The image includes a default page at `/`. To replace it without rebuilding,
+bind-mount a directory over `/usr/local/share/misskey-egress-proxy` (or set
+`STATIC_DIR` to another mounted path). Either file may be omitted; a missing
+`index.html` or `misskey.svg` falls back to the version bundled into the binary.
+The bundled wordmark is vendored from
+[`packages/frontend/assets/misskey.svg`](https://github.com/misskey-dev/misskey/blob/develop/packages/frontend/assets/misskey.svg)
+in the official Misskey repository.
 
 See `docker-compose.yml` for a production reference layout.
 

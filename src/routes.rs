@@ -10,14 +10,19 @@ use axum::routing::{get, post};
 use crate::accept_gate::force_ap_accept;
 use crate::config::Config;
 use crate::feed_routes::reject_feed_paths;
+use crate::home;
 use crate::media_redirect::redirect_internal_referer;
 use crate::proxy::{ProxyState, forward};
 
-/// The entire public egress surface, in one place. Every path registered
-/// here is allowed through to Misskey; everything else falls through to
-/// axum's default 404. See `docs/routes.md` for why each of these, and only
-/// these, paths is here (with citations into Misskey's own source).
+/// The entire public surface, in one place. The two landing-page routes are
+/// served locally; every other registered path is allowed through to
+/// Misskey, and everything else falls through to axum's default 404. See
+/// `docs/routes.md` for why each of these, and only these, paths is here.
 pub fn build(proxy_state: ProxyState, config: Arc<Config>) -> Router {
+    // A deliberately tiny human-facing surface: one informational page and
+    // its vendored Misskey wordmark. Neither route reaches Misskey.
+    let home = home::routes(config.static_dir.clone());
+
     // `/files/*` and `/proxy/*`: media, gated on an internal-Referer redirect.
     // `route_layer`, not `layer`: the redirect is scoped to these four
     // routes and must not run on the 404 fallback, or a spoofed internal
@@ -71,6 +76,7 @@ pub fn build(proxy_state: ProxyState, config: Arc<Config>) -> Router {
         .route("/identicon/{x}", get(forward));
 
     Router::new()
+        .merge(home)
         .merge(plain)
         .merge(gated)
         .merge(media)

@@ -43,6 +43,10 @@ pub struct Config {
     /// `.tailnet-name.ts.net`. Any `Referer` whose host ends with this
     /// suffix is treated as internal and redirected instead of proxied.
     pub internal_referer_suffix: String,
+    /// Directory checked for replacements for the bundled landing page.
+    /// Mounting a directory here can override `index.html` and
+    /// `misskey.svg` without rebuilding the image.
+    pub static_dir: PathBuf,
 }
 
 /// Socket permissions used when `LISTEN_SOCKET_MODE` is unset: readable and
@@ -70,6 +74,9 @@ impl Config {
                 .to_string(),
             internal_referer_suffix: env::var("INTERNAL_REFERER_SUFFIX")
                 .map_err(|_| "INTERNAL_REFERER_SUFFIX env var is required".to_string())?,
+            static_dir: env::var("STATIC_DIR")
+                .map(PathBuf::from)
+                .unwrap_or_else(|_| PathBuf::from("/usr/local/share/misskey-egress-proxy")),
         })
     }
 }
