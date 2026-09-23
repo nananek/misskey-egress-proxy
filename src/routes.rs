@@ -40,15 +40,13 @@ pub fn build(proxy_state: ProxyState, config: Arc<Config>) -> Router {
         ));
 
     // The three dual-purpose (AP-or-HTML) paths: `Accept` is rewritten to
-    // AP JSON and the client-only feed twins of `/@{acct}` are rejected, so
-    // Misskey never picks a non-AP branch for a public caller. `route_layer`
-    // for the same fallback-scoping reason as above.
+    // AP JSON, so Misskey never picks a non-AP branch for a public caller.
+    // `route_layer` for the same fallback-scoping reason as above.
     let gated = Router::new()
         .route("/notes/{note}", get(forward))
         .route("/users/{user}", get(forward))
         .route("/@{acct}", get(forward))
-        .route_layer(middleware::from_fn(force_ap_accept))
-        .route_layer(middleware::from_fn(reject_feed_paths));
+        .route_layer(middleware::from_fn(force_ap_accept));
 
     // Everything else: unconditionally AP-only in Misskey itself, so no
     // extra gating is needed here.
@@ -81,10 +79,20 @@ pub fn build(proxy_state: ProxyState, config: Arc<Config>) -> Router {
         .merge(plain)
         .merge(gated)
         .merge(media)
+        // Order matters here:
+        //
+        // 1. Install the draining 405 handler first. This replaces every
+        //    route's default method-not-allowed fallback (including the ones
+        //    a `route_layer` had already wrapped), so no 405 is answered
+        //    without draining the request body.
+        .method_not_allowed_fallback(reject::method_not_allowed)
+        // 2. Then wrap every route — including that 405 handler — with the
+        //    feed check, so a POST to a client-only feed twin gets the same
+        //    404 a GET gets.
+        .layer(middleware::from_fn(reject_feed_paths))
         // Rejections drain the request body before answering, so a caller
         // that is still writing its body sees the 404/405 instead of the
         // connection dying under it. See `src/reject.rs`.
         .fallback(reject::not_found)
-        .method_not_allowed_fallback(reject::method_not_allowed)
         .with_state(proxy_state)
 }
