@@ -26,6 +26,18 @@ else
 fi
 
 ##
+## The proxy itself serves a deliberately small informational page at `/`.
+## It must be available without falling through to Misskey's client SPA.
+##
+note "checking the proxy's public landing page"
+status="$(call GET "https://misskey-a/")"
+if [ "$status" = "200" ] && grep -q 'misskey-egress-proxy' "$BODY_FILE"; then
+	ok "/ -> 200 with the proxy landing page"
+else
+	bad "/ -> HTTP ${status}, expected the proxy landing page"
+fi
+
+##
 ## Negative test: everything NOT on the allowlist must be unreachable from
 ## the public side, no matter how plausible-looking.
 ##
@@ -41,7 +53,6 @@ for path in \
 	"/url?url=https://example.com" \
 	"/manifest.json" \
 	"/robots.txt" \
-	"/" \
 	"/emoji/x.webp" \
 	"/avatar/@admin" \
 	"/@admin.rss" \
