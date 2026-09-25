@@ -179,6 +179,29 @@ pub fn parse_referer_suffix(raw: &str) -> Result<String, String> {
              `.` would match every host written with a trailing dot"
         ));
     }
+    // A suffix is matched against a `Referer`'s host, which the `url` crate has
+    // made ASCII (punycode) and lowercase. One that could not be such a host, or
+    // could not be part of one, would never match and switch the internal
+    // redirect off without a word.
+    if !suffix
+        .bytes()
+        .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'.')
+    {
+        return Err(format!(
+            "INTERNAL_REFERER_SUFFIX {raw:?} may contain only ASCII letters, digits, `-` and \
+             `.`: write an internationalised name in punycode (`xn--...`)"
+        ));
+    }
+    // One leading and one trailing dot are fine (`.your-tailnet.ts.net`); an
+    // empty label anywhere else (`a..b`) is not a host name.
+    let labels = suffix.strip_prefix('.').unwrap_or(&suffix);
+    let labels = labels.strip_suffix('.').unwrap_or(labels);
+    if labels.split('.').any(str::is_empty) {
+        return Err(format!(
+            "INTERNAL_REFERER_SUFFIX {raw:?} has an empty label: at most one `.` at each end, \
+             and none in a row"
+        ));
+    }
     Ok(suffix)
 }
 
@@ -348,6 +371,51 @@ mod tests {
             assert!(err.contains("dots"), "{raw:?}: {err}");
         }
         for raw in ["h", ".h", "h.", "h.h", ".h.h"] {
+            assert!(parse_referer_suffix(raw).is_ok(), "{raw:?}");
+        }
+    }
+
+    /// A suffix that could never be (part of) the host of a `Referer` would
+    /// match nothing and switch the internal redirect off silently.
+    #[test]
+    fn a_referer_suffix_that_can_never_match_is_an_error_that_says_why() {
+        for raw in [
+            "\u{30c6}\u{30a4}\u{30eb}.example",
+            "\u{c9}COLE.example",
+            "internal example.ts.net",
+            "a/b.example",
+            "a:b",
+            "a@b.example",
+            "h_x.example",
+        ] {
+            let err = parse_referer_suffix(raw).unwrap_err();
+            assert!(err.contains("INTERNAL_REFERER_SUFFIX"), "{raw:?}: {err}");
+            assert!(err.contains("punycode"), "{raw:?}: {err}");
+        }
+        for raw in ["a..b", "..h", "h..", ".h..", "..h.", "a...b", ".a..b."] {
+            let err = parse_referer_suffix(raw).unwrap_err();
+            assert!(err.contains("INTERNAL_REFERER_SUFFIX"), "{raw:?}: {err}");
+            assert!(err.contains("empty label"), "{raw:?}: {err}");
+        }
+    }
+
+    /// Every way an operator would really write a suffix is kept, including a
+    /// single dot at either end and punycode.
+    #[test]
+    fn the_ways_an_operator_writes_a_referer_suffix_are_kept() {
+        for raw in [
+            ".your-tailnet.ts.net",
+            "your-tailnet.ts.net",
+            ".ts.net",
+            ".xn--80ak6aa92e.example",
+            "xn--80ak6aa92e.example",
+            ".h.",
+            "h.",
+            "-h",
+            "a-b.c1",
+            "100.64.0.1",
+            " .Your-Tailnet.TS.net ",
+        ] {
             assert!(parse_referer_suffix(raw).is_ok(), "{raw:?}");
         }
     }

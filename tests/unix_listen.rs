@@ -560,6 +560,26 @@ fn a_bad_media_setting_stops_the_proxy_at_startup_and_names_it() {
             ],
             vec!["INTERNAL_REFERER_SUFFIX", "dots"],
         ),
+        // A suffix that could never be a Referer's host would switch the
+        // internal redirect off without a word.
+        (
+            vec![(
+                "INTERNAL_REFERER_SUFFIX",
+                "\u{30c6}\u{30a4}\u{30eb}.example",
+            )],
+            vec!["INTERNAL_REFERER_SUFFIX", "punycode"],
+        ),
+        (
+            vec![
+                ("MEDIA_MODE", "redirect"),
+                ("INTERNAL_REFERER_SUFFIX", "internal example.ts.net"),
+            ],
+            vec!["INTERNAL_REFERER_SUFFIX", "punycode"],
+        ),
+        (
+            vec![("INTERNAL_REFERER_SUFFIX", ".internal..example.ts.net")],
+            vec!["INTERNAL_REFERER_SUFFIX", "empty label"],
+        ),
     ] {
         let misskey = unique_path("misskey");
         let listen = unique_path("egress");
