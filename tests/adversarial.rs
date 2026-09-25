@@ -10,6 +10,10 @@
 //! - an `INTERNAL_BASE_URL` with a dot-segment in it, which must not reach a
 //!   `Location`,
 //! - port 0 in an allowlist entry or in `INTERNAL_BASE_URL`,
+//! - `no-store` on the internal redirect of a `/proxy` request, and an upstream
+//!   `Cache-Control` that must come through `forward` untouched,
+//! - an `INTERNAL_BASE_URL` in canonical form (a non-default port, an IPv6
+//!   literal, a trailing-dot host), which is used exactly as written,
 //! - a method override header on a `POST`,
 //! - an allowlist prefix written with a percent-escape,
 //! - quotes in the query of an original URL,
@@ -22,10 +26,11 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use axum::Router;
 use axum::body::Body;
-use axum::http::{Request, StatusCode};
+use axum::http::{Request, StatusCode, header};
 use axum::response::Response;
 use tower::ServiceExt;
 
@@ -37,6 +42,7 @@ use misskey_egress_proxy::proxy::{ProxyState, build_client};
 use misskey_egress_proxy::routes;
 
 const INTERNAL_BASE: &str = "https://internal.example.ts.net";
+const INTERNAL_REFERER: (&str, &str) = ("referer", "https://misskey.internal.example.ts.net/");
 const NO_DIR: &str = "/path/that/does/not/exist";
 
 fn dead_socket() -> PathBuf {
@@ -53,7 +59,16 @@ fn build_with_base(
     allowed: Vec<AllowedPrefix>,
     internal_base_url: &str,
 ) -> Router {
-    let socket = dead_socket();
+    build_on(mode, suffix, allowed, internal_base_url, dead_socket())
+}
+
+fn build_on(
+    mode: MediaMode,
+    suffix: &str,
+    allowed: Vec<AllowedPrefix>,
+    internal_base_url: &str,
+    socket: PathBuf,
+) -> Router {
     let config = Arc::new(Config {
         listen: ListenTarget::Tcp("127.0.0.1:0".to_string()),
         misskey_socket: socket.clone(),
@@ -91,6 +106,36 @@ fn location(resp: &Response) -> Option<String> {
     resp.headers()
         .get("location")
         .map(|v| v.to_str().unwrap().to_string())
+}
+
+fn cache_control(resp: &Response) -> Option<String> {
+    resp.headers()
+        .get(header::CACHE_CONTROL)
+        .map(|v| v.to_str().unwrap().to_string())
+}
+
+/// A mock Misskey that answers every request with an explicit `Cache-Control`,
+/// so a test can tell the proxy's `no-store` from the upstream's own header.
+async fn spawn_cache_mock() -> PathBuf {
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let socket = std::env::temp_dir().join(format!(
+        "mep-adversarial-mock-{}-{}.sock",
+        std::process::id(),
+        COUNTER.fetch_add(1, Ordering::Relaxed)
+    ));
+    let _ = std::fs::remove_file(&socket);
+    let app = Router::new().fallback(|| async {
+        (
+            StatusCode::OK,
+            [(header::CACHE_CONTROL, "public, max-age=60")],
+            "mock",
+        )
+    });
+    let listener = tokio::net::UnixListener::bind(&socket).expect("bind mock socket");
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.expect("mock crashed");
+    });
+    socket
 }
 
 /// An empty suffix would make `host.ends_with("")` true for every host, so
@@ -318,5 +363,88 @@ async fn lookalike_media_paths_never_reach_the_upstream_in_redirect_mode() {
         );
         assert_eq!(resp.status(), StatusCode::NOT_FOUND, "{target}");
         assert_eq!(location(&resp), None, "{target}");
+    }
+}
+
+/// In redirect mode the internal redirect also covers `/proxy/*?url=`, and the
+/// internal host name is in that `Location` as much as in a `/files/` one, so
+/// it must not be cacheable either.
+#[tokio::test]
+async fn no_store_covers_the_internal_proxy_redirect_in_redirect_mode() {
+    let target = "/proxy/i.webp?url=https%3A%2F%2Fs3.example.com%2Fbucket%2Fa.png";
+    let app = build(MediaMode::Redirect, ".internal.example.ts.net", vec![]);
+
+    for method in ["GET", "HEAD"] {
+        let resp = call(&app, method, target, &[INTERNAL_REFERER]).await;
+        assert_eq!(resp.status(), StatusCode::FOUND, "{method}");
+        assert_eq!(
+            location(&resp),
+            Some(format!("{INTERNAL_BASE}{target}")),
+            "{method}"
+        );
+        assert_eq!(
+            cache_control(&resp).as_deref(),
+            Some("no-store"),
+            "{method}: an internal Location must not be stored"
+        );
+    }
+}
+
+/// What `forward` returns is Misskey's, not the media layer's: an upstream
+/// `Cache-Control` comes through unchanged, while the layer's own 302 for the
+/// same URL (an internal `Referer`) is `no-store`.
+#[tokio::test]
+async fn a_forwarded_response_keeps_its_own_cache_control() {
+    let socket = spawn_cache_mock().await;
+    let app = build_on(
+        MediaMode::Proxy,
+        ".internal.example.ts.net",
+        vec![],
+        INTERNAL_BASE,
+        socket,
+    );
+
+    let forwarded = get(&app, "/files/x", &[("referer", "https://evil.example/")]).await;
+    assert_eq!(forwarded.status(), StatusCode::OK);
+    assert_eq!(
+        cache_control(&forwarded).as_deref(),
+        Some("public, max-age=60"),
+        "the upstream header must survive forward"
+    );
+
+    let internal = get(&app, "/files/x", &[INTERNAL_REFERER]).await;
+    assert_eq!(internal.status(), StatusCode::FOUND);
+    assert_eq!(cache_control(&internal).as_deref(), Some("no-store"));
+}
+
+/// The canonical-form rule accepts a non-default port, an IPv6 literal and a
+/// trailing-dot host, and the `Location` is exactly what was written: the
+/// parse-back check in `internal_location` must neither refuse nor rewrite
+/// any of them.
+#[tokio::test]
+async fn a_canonical_base_is_used_verbatim() {
+    for base in [
+        "https://h:8443",
+        "http://[::1]:3000",
+        "https://h.",
+        "http://100.64.0.1:3000",
+    ] {
+        assert!(
+            validate_internal_base_url(base).is_ok(),
+            "{base:?} is a canonical origin"
+        );
+        let app = build_with_base(
+            MediaMode::Redirect,
+            ".internal.example.ts.net",
+            vec![],
+            base,
+        );
+        let resp = get(&app, "/files/x", &[INTERNAL_REFERER]).await;
+        assert_eq!(resp.status(), StatusCode::FOUND, "{base}");
+        assert_eq!(
+            location(&resp),
+            Some(format!("{base}/files/x")),
+            "{base} must be used verbatim"
+        );
     }
 }
