@@ -245,6 +245,18 @@ pub fn validate_internal_base_url(base: &str) -> Result<(), String> {
     if url.port() == Some(0) {
         return Err(bad("the port must be between 1 and 65535"));
     }
+    // The crate accepts `.h` and `h..` as domains, and they are their own normal
+    // form, but no such host resolves. Only a single trailing dot is a name.
+    if host
+        .strip_suffix('.')
+        .unwrap_or(host)
+        .split('.')
+        .any(str::is_empty)
+    {
+        return Err(bad(
+            "the host has an empty label (a leading `.` or `..`); only one trailing `.` is allowed",
+        ));
+    }
 
     let canonical = match url.port() {
         Some(port) => format!("{}://{host}:{port}", url.scheme()),
@@ -441,6 +453,7 @@ mod tests {
             "https://misskey.your-tailnet.ts.net",
             // A trailing dot is the host's normal form.
             "https://h.",
+            "https://a.b.",
         ] {
             assert!(validate_internal_base_url(base).is_ok(), "{base}");
         }
@@ -467,6 +480,11 @@ mod tests {
             ("https://h#x", "fragment"),
             ("https://h/p", "path"),
             ("https://h:0", "port"),
+            ("https://.h", "empty label"),
+            ("https://h..", "empty label"),
+            ("https://h...", "empty label"),
+            ("https://a..b", "empty label"),
+            ("https://.a.b.", "empty label"),
             ("https://H", "write it as \"https://h\""),
             ("https://h:443", "write it as \"https://h\""),
             ("https://h/..", "write it as \"https://h\""),

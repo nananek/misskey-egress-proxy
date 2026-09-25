@@ -521,6 +521,21 @@ fn a_bad_media_setting_stops_the_proxy_at_startup_and_names_it() {
             ],
             vec!["INTERNAL_BASE_URL", "000443"],
         ),
+        // A host with an empty label resolves nowhere; only one trailing dot is a name.
+        (
+            vec![
+                ("MEDIA_MODE", "redirect"),
+                ("INTERNAL_BASE_URL", "https://internal.example.ts.net.."),
+            ],
+            vec!["INTERNAL_BASE_URL", "empty label"],
+        ),
+        (
+            vec![
+                ("MEDIA_MODE", "redirect"),
+                ("INTERNAL_BASE_URL", "https://.internal.example.ts.net"),
+            ],
+            vec!["INTERNAL_BASE_URL", "empty label"],
+        ),
         // Nothing serves TLS on port 0.
         (
             vec![
