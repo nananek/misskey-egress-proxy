@@ -42,6 +42,8 @@ async fn main() {
             tracing::info!(
                 addr = %addr,
                 socket = %config.misskey_socket.display(),
+                media_mode = ?config.media_mode,
+                media_allowed_prefixes = config.media_allowed_prefixes.len(),
                 "misskey-egress-proxy listening"
             );
 
@@ -53,6 +55,8 @@ async fn main() {
             tracing::info!(
                 addr = %format!("unix:{}", path.display()),
                 socket = %config.misskey_socket.display(),
+                media_mode = ?config.media_mode,
+                media_allowed_prefixes = config.media_allowed_prefixes.len(),
                 "misskey-egress-proxy listening"
             );
 

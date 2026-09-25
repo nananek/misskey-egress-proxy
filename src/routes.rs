@@ -11,7 +11,7 @@ use crate::accept_gate::force_ap_accept;
 use crate::config::Config;
 use crate::feed_routes::reject_feed_paths;
 use crate::home;
-use crate::media_redirect::redirect_internal_referer;
+use crate::media_redirect::redirect_media;
 use crate::proxy::{ProxyState, forward};
 use crate::reject;
 
@@ -24,20 +24,20 @@ pub fn build(proxy_state: ProxyState, config: Arc<Config>) -> Router {
     // its vendored Misskey wordmark. Neither route reaches Misskey.
     let home = home::routes(config.static_dir.clone());
 
-    // `/files/*` and `/proxy/*`: media, gated on an internal-Referer redirect.
-    // `route_layer`, not `layer`: the redirect is scoped to these four
-    // routes and must not run on the 404 fallback, or a spoofed internal
-    // Referer would turn every unknown path into a 302 to the internal host
-    // instead of a 404.
+    // `/files/*` and `/proxy/*`: media. `redirect_media` sends an internal
+    // Referer to the internal host and then, by `MEDIA_MODE`, either lets the
+    // request through to `forward` (`proxy`) or answers it locally without
+    // ever calling `forward` (`redirect`); the four routes stay `get(forward)`
+    // either way. `route_layer`, not `layer`: the middleware is scoped to
+    // these four routes and must not run on the 404 fallback, or a spoofed
+    // internal Referer would turn every unknown path into a 302 to the
+    // internal host instead of a 404.
     let media = Router::new()
         .route("/files/app-default.jpg", get(forward))
         .route("/files/{key}", get(forward))
         .route("/files/{key}/{*rest}", get(forward))
         .route("/proxy/{*rest}", get(forward))
-        .route_layer(middleware::from_fn_with_state(
-            config,
-            redirect_internal_referer,
-        ));
+        .route_layer(middleware::from_fn_with_state(config, redirect_media));
 
     // The three dual-purpose (AP-or-HTML) paths: `Accept` is rewritten to
     // AP JSON, so Misskey never picks a non-AP branch for a public caller.

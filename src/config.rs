@@ -50,11 +50,15 @@ pub struct Config {
     /// Base URL of the internal (Tailscale-reachable) Misskey deployment,
     /// e.g. `https://misskey.tailnet-name.ts.net`. Used only to build the
     /// redirect target for `/files/*` and `/proxy/*` when the request looks
-    /// like it came from an internal caller.
+    /// like it came from an internal caller, in either `MEDIA_MODE`. In
+    /// `redirect` mode it is checked at startup (see
+    /// `validate_internal_base_url`).
     pub internal_base_url: String,
     /// Hostname suffix that identifies an internal `Referer`, e.g.
     /// `.tailnet-name.ts.net`. Any `Referer` whose host ends with this
-    /// suffix is treated as internal and redirected instead of proxied.
+    /// suffix is treated as internal and redirected instead of proxied (or,
+    /// in `redirect` mode, instead of being answered locally). Required in
+    /// both modes.
     pub internal_referer_suffix: String,
     /// Directory checked for replacements for the bundled landing page.
     /// Mounting a directory here can override `index.html` and
