@@ -330,6 +330,11 @@ fn parse_prefix_entry(entry: &str) -> Result<AllowedPrefix, String> {
     let port = parsed
         .port_or_known_default()
         .ok_or("the entry has no usable port")?;
+    // The syntax above allows `:0` (and `:00`), but nothing serves TLS there:
+    // an entry on it could only ever produce a `Location` no client can follow.
+    if port == 0 {
+        return Err("the port must be between 1 and 65535".to_string());
+    }
 
     // A path the parser had to rewrite (dot-segments, characters that need
     // encoding) is not the path the operator wrote; ask for the exact form.
@@ -795,6 +800,9 @@ mod tests {
             "https://s3.example.com:/",
             "https://s3.example.com:abc/",
             "https://s3.example.com:65536/",
+            "https://s3.example.com:0/",
+            "https://s3.example.com:00/",
+            "https://s3.example.com:00000/bucket/",
             "https://s3.example.com/a/../b/",
             "https://s3.example.com/a/./b/",
             "https://s3.example.com/a%2fb/",

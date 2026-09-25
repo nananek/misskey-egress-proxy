@@ -213,6 +213,9 @@ pub fn validate_internal_base_url(base: &str) -> Result<(), String> {
     if url.path() != "/" {
         return Err(bad("it must not carry a path"));
     }
+    if url.port() == Some(0) {
+        return Err(bad("the port must be between 1 and 65535"));
+    }
 
     let canonical = match url.port() {
         Some(port) => format!("{}://{host}:{port}", url.scheme()),
@@ -366,6 +369,8 @@ mod tests {
             "https://h/%2E%2e",
             "https://h/x/..",
             "https://h:000443",
+            "https://h:0",
+            "https://h:00",
             "https://h:443",
             "http://h:80",
             "https://%68",

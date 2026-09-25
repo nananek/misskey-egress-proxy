@@ -9,6 +9,7 @@
 //!   boundary,
 //! - an `INTERNAL_BASE_URL` with a dot-segment in it, which must not reach a
 //!   `Location`,
+//! - port 0 in an allowlist entry or in `INTERNAL_BASE_URL`,
 //! - a method override header on a `POST`,
 //! - an allowlist prefix written with a percent-escape,
 //! - quotes in the query of an original URL,
@@ -199,6 +200,27 @@ async fn a_base_with_a_dot_segment_never_becomes_a_location() {
             assert_eq!(resp.status(), StatusCode::NOT_FOUND, "{mode:?} {base}");
             assert_eq!(location(&resp), None, "{mode:?} {base}");
         }
+    }
+}
+
+/// Port 0 is one to five digits, but no TLS server listens on it: an entry
+/// there can only produce a `Location` no client can follow. It belongs with
+/// the empty and non-numeric ports the parser already refuses, and so does the
+/// same port in `INTERNAL_BASE_URL`.
+#[test]
+fn a_media_prefix_on_port_zero_must_be_refused() {
+    let err = parse_allowed_prefixes(Some("https://host.example:0/"));
+    assert!(
+        err.is_err(),
+        "port 0 must not be a usable prefix: {:?}",
+        err.ok()
+    );
+
+    for base in ["https://h:0", "http://h:00"] {
+        assert!(
+            validate_internal_base_url(base).is_err(),
+            "{base:?} must not be a usable base"
+        );
     }
 }
 

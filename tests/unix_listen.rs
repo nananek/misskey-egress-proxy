@@ -521,6 +521,21 @@ fn a_bad_media_setting_stops_the_proxy_at_startup_and_names_it() {
             ],
             vec!["INTERNAL_BASE_URL", "000443"],
         ),
+        // Nothing serves TLS on port 0.
+        (
+            vec![
+                ("MEDIA_MODE", "redirect"),
+                ("MEDIA_ALLOWED_PREFIXES", "https://host.example:0/"),
+            ],
+            vec!["MEDIA_ALLOWED_PREFIXES", "https://host.example:0/"],
+        ),
+        (
+            vec![
+                ("MEDIA_MODE", "redirect"),
+                ("INTERNAL_BASE_URL", "https://internal.example.ts.net:0"),
+            ],
+            vec!["INTERNAL_BASE_URL", ":0"],
+        ),
         // An empty suffix would make every Referer internal; refused in both modes.
         (
             vec![("INTERNAL_REFERER_SUFFIX", "")],

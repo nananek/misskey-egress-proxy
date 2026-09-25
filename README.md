@@ -143,7 +143,8 @@ MEDIA_ALLOWED_PREFIXES=https://misskey.example.com/files/,https://r2.example.net
   sits in front; if that routing is ever wrong, `/files/*` fails loudly
   rather than reaching Misskey.
 - **Only `https://` entries are accepted, and only exact host names**: no IP
-  addresses, no wildcards, no trailing dot.
+  addresses, no wildcards, no trailing dot, and a port only in 1–65535 (`:0` is
+  refused).
 - Requests it cannot vouch for are refused rather than repaired: the `url`
   must be a single, plain `https://host[:port]/path` value. The validation
   rules and why each exists are in [`docs/routes.md`](docs/routes.md).
