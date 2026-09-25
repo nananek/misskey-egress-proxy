@@ -104,12 +104,13 @@ fn referer_is_internal(req: &Request, config: &Config) -> bool {
 /// - A suffix without the leading dot (`your-tailnet.ts.net`) matches that
 ///   host and the hosts under it, on a label boundary: `notyour-tailnet.ts.net`
 ///   is not internal.
-/// - An empty suffix never matches. `ends_with("")` is true for every host, and
-///   startup refuses an empty value, but this must not be the only thing
-///   standing between a misconfiguration and every `Referer` counting as
+/// - An empty suffix, or one of nothing but dots, never matches. `ends_with("")`
+///   is true for every host and `ends_with(".")` for every host written with a
+///   trailing dot. Startup refuses such a value, but this must not be the only
+///   thing standing between a misconfiguration and `Referer`s counting as
 ///   internal.
 fn host_is_internal(host: &str, suffix: &str) -> bool {
-    if suffix.is_empty() {
+    if suffix.bytes().all(|b| b == b'.') {
         return false;
     }
     if suffix.starts_with('.') {
@@ -161,6 +162,17 @@ mod tests {
     fn an_empty_suffix_matches_no_host() {
         for host in ["", "example.com", "misskey.internal.example.ts.net"] {
             assert!(!host_is_internal(host, ""), "{host:?}");
+        }
+    }
+
+    /// `.` is a dotted suffix that `ends_with` would match against every host
+    /// written with a trailing dot.
+    #[test]
+    fn a_suffix_of_only_dots_matches_no_host() {
+        for suffix in [".", "..", "..."] {
+            for host in ["", "evil.example.", "evil.example..", "."] {
+                assert!(!host_is_internal(host, suffix), "{suffix:?} {host:?}");
+            }
         }
     }
 

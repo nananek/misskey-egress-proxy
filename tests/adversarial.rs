@@ -5,8 +5,9 @@
 //! routes treat input that is built to look like something else:
 //!
 //! - an empty `INTERNAL_REFERER_SUFFIX`, which must not make every `Referer`
-//!   internal, and one written without its leading dot, which matches on a dot
-//!   boundary,
+//!   internal, one made only of dots, which must not make every trailing-dot
+//!   host internal, and one written without its leading dot, which matches on
+//!   a dot boundary,
 //! - an `INTERNAL_BASE_URL` with a dot-segment in it, which must not reach a
 //!   `Location`,
 //! - port 0 in an allowlist entry or in `INTERNAL_BASE_URL`,
@@ -34,7 +35,9 @@ use axum::http::{Request, StatusCode, header};
 use axum::response::Response;
 use tower::ServiceExt;
 
-use misskey_egress_proxy::config::{Config, ListenTarget, MediaMode, validate_internal_base_url};
+use misskey_egress_proxy::config::{
+    Config, ListenTarget, MediaMode, parse_referer_suffix, validate_internal_base_url,
+};
 use misskey_egress_proxy::media_target::{
     AllowedPrefix, internal_location, parse_allowed_prefixes,
 };
@@ -161,6 +164,46 @@ async fn an_empty_internal_referer_suffix_must_not_make_every_referer_internal()
     let resp = get(&app, "/files/x", &foreign).await;
     assert_eq!(resp.status(), StatusCode::BAD_GATEWAY);
     assert_eq!(location(&resp), None);
+}
+
+/// A suffix of nothing but dots names no host, and `.` would mean "every host
+/// written with a trailing dot", which no operator can intend. It is refused
+/// when the value is read; a suffix with even one label character stays usable,
+/// written with or without either dot.
+#[test]
+fn an_all_dots_referer_suffix_must_be_refused() {
+    for raw in [".", "..", "...", " . "] {
+        assert!(
+            parse_referer_suffix(raw).is_err(),
+            "{raw:?} names no host and must be refused"
+        );
+    }
+    for raw in ["h", ".h", "h.", "h.h", ".h.h"] {
+        assert!(parse_referer_suffix(raw).is_ok(), "{raw:?}");
+    }
+}
+
+/// The request-level consequence, with `Config` built directly so that refusing
+/// the value at startup is not enough: with `.` (or `..`) as the suffix, the
+/// unrelated host `evil.example` is not internal just because its `Referer` is
+/// written with a trailing dot.
+#[tokio::test]
+async fn a_dot_only_suffix_must_not_make_every_trailing_dot_host_internal() {
+    for (suffix, referer) in [
+        (".", "https://evil.example./"),
+        ("..", "https://evil.example../"),
+    ] {
+        let app = build(MediaMode::Redirect, suffix, vec![]);
+
+        let resp = get(&app, "/files/x", &[("referer", referer)]).await;
+
+        assert_eq!(
+            resp.status(),
+            StatusCode::NOT_FOUND,
+            "{suffix:?}: a trailing-dot foreign host is not internal; got {:?}",
+            location(&resp)
+        );
+    }
 }
 
 /// A suffix written without its leading dot names a host and its subdomains,

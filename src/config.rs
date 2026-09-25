@@ -173,6 +173,12 @@ pub fn parse_referer_suffix(raw: &str) -> Result<String, String> {
                 .to_string(),
         );
     }
+    if suffix.bytes().all(|b| b == b'.') {
+        return Err(format!(
+            "INTERNAL_REFERER_SUFFIX {raw:?} is nothing but dots: it names no host, and \
+             `.` would match every host written with a trailing dot"
+        ));
+    }
     Ok(suffix)
 }
 
@@ -324,11 +330,26 @@ mod tests {
         for raw in ["", " ", "\t", " \n "] {
             let err = parse_referer_suffix(raw).unwrap_err();
             assert!(err.contains("INTERNAL_REFERER_SUFFIX"), "{raw:?}: {err}");
+            assert!(err.contains("empty"), "{raw:?}: {err}");
         }
         assert_eq!(
             parse_referer_suffix(".your-tailnet.ts.net").unwrap(),
             ".your-tailnet.ts.net"
         );
+    }
+
+    /// A suffix of nothing but dots names no host, and `.` would match every
+    /// host written with a trailing dot.
+    #[test]
+    fn a_referer_suffix_of_only_dots_is_an_error_that_names_the_variable() {
+        for raw in [".", "..", "...", " . ", "\t..\n"] {
+            let err = parse_referer_suffix(raw).unwrap_err();
+            assert!(err.contains("INTERNAL_REFERER_SUFFIX"), "{raw:?}: {err}");
+            assert!(err.contains("dots"), "{raw:?}: {err}");
+        }
+        for raw in ["h", ".h", "h.", "h.h", ".h.h"] {
+            assert!(parse_referer_suffix(raw).is_ok(), "{raw:?}");
+        }
     }
 
     #[test]

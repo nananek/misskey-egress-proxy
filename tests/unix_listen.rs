@@ -548,6 +548,18 @@ fn a_bad_media_setting_stops_the_proxy_at_startup_and_names_it() {
             ],
             vec!["INTERNAL_REFERER_SUFFIX"],
         ),
+        // Dots alone name no host; `.` would match every trailing-dot host.
+        (
+            vec![("INTERNAL_REFERER_SUFFIX", ".")],
+            vec!["INTERNAL_REFERER_SUFFIX", "dots"],
+        ),
+        (
+            vec![
+                ("MEDIA_MODE", "redirect"),
+                ("INTERNAL_REFERER_SUFFIX", " .. "),
+            ],
+            vec!["INTERNAL_REFERER_SUFFIX", "dots"],
+        ),
     ] {
         let misskey = unique_path("misskey");
         let listen = unique_path("egress");
