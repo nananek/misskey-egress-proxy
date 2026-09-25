@@ -145,7 +145,8 @@ find-my-way はルーティング前に `safeDecodeURI` + `decodeURI` で
 
 `MEDIA_MODE` の未知値・空文字は起動時エラー。`redirect` モードでは
 `INTERNAL_BASE_URL` も起動時に検証する（http/https の origin のみ。userinfo・
-query・fragment・パスは不可）。内部 Referer の 302 がこの値に依存するので、
+query・fragment・パスは不可。空白・制御文字・`\`・非 ASCII も不可なので、IDN の
+ホストは punycode で書く）。内部 Referer の 302 がこの値に依存するので、
 typo を実行時の 404 ではなく起動失敗にするため。`MEDIA_ALLOWED_PREFIXES` は
 `proxy` モードでは検証せず無視する（設定されていれば `warn` ログ）。
 

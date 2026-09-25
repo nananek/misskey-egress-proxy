@@ -300,6 +300,9 @@ mod tests {
             "https:///",
             "https://h ",
             "https://h\n",
+            // Valid to the `url` crate (it would punycode the host), but the
+            // redirect target must be written exactly as it will be sent.
+            "https://\u{30e1}\u{30c7}\u{30a3}\u{30a2}.example",
             // `\` ends the authority for the `url` crate, so `https://h\` reads
             // as a valid origin, but no path can be appended to it that
             // survives `internal_location`'s parse-back.
