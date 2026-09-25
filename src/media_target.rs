@@ -797,6 +797,19 @@ mod tests {
         parse_allowed_prefixes(Some(T_SET)).unwrap()
     }
 
+    /// `T_SET_PERMITS` is the invariant check's own, hand-written statement of
+    /// what `T_SET` permits. It is only an independent oracle if it is pinned
+    /// to what the parser actually makes of `T_SET`.
+    #[test]
+    fn the_corpus_oracle_states_what_the_allowlist_parses_to() {
+        let allowed = allowed();
+        let parsed: Vec<(&str, u16, &str)> = allowed
+            .iter()
+            .map(|entry| (entry.host.as_str(), entry.port, entry.path.as_str()))
+            .collect();
+        assert_eq!(parsed, T_SET_PERMITS);
+    }
+
     /// The outcome in the corpus's own vocabulary.
     fn outcome(result: Result<String, Reject>) -> String {
         match result {
