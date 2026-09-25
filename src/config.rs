@@ -158,9 +158,12 @@ pub fn parse_media_mode(raw: Option<&str>) -> Result<MediaMode, String> {
 pub fn validate_internal_base_url(base: &str) -> Result<(), String> {
     let bad = |why: &str| format!("INTERNAL_BASE_URL {base:?} is not usable: {why}");
 
-    if !base.bytes().all(|b| (0x21..=0x7e).contains(&b)) {
+    if !base
+        .bytes()
+        .all(|b| (0x21..=0x7e).contains(&b) && b != b'\\')
+    {
         return Err(bad(
-            "it contains whitespace, control or non-ASCII characters",
+            "it contains whitespace, control or non-ASCII characters, or a backslash",
         ));
     }
     let url = url::Url::parse(base).map_err(|e| bad(&e.to_string()))?;
@@ -297,6 +300,11 @@ mod tests {
             "https:///",
             "https://h ",
             "https://h\n",
+            // `\` ends the authority for the `url` crate, so `https://h\` reads
+            // as a valid origin, but no path can be appended to it that
+            // survives `internal_location`'s parse-back.
+            "https://h\\",
+            "https://h:8443\\",
         ] {
             let err = validate_internal_base_url(base).unwrap_err();
             assert!(err.contains("INTERNAL_BASE_URL"), "{base:?}: {err}");
