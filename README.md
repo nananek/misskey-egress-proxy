@@ -144,7 +144,9 @@ MEDIA_ALLOWED_PREFIXES=https://misskey.example.com/files/,https://r2.example.net
   rather than reaching Misskey.
 - **Only `https://` entries are accepted, and only exact host names**: no IP
   addresses, no wildcards, no trailing dot, and a port only in 1–65535 (`:0` is
-  refused).
+  refused). A non-ASCII host is normalised to punycode and allowed as that, so
+  write it in punycode: a look-alike character typed by mistake would allow a
+  different host than the one intended.
 - Requests it cannot vouch for are refused rather than repaired: the `url`
   must be a single, plain `https://host[:port]/path` value. The validation
   rules and why each exists are in [`docs/routes.md`](docs/routes.md).

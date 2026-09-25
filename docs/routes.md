@@ -244,7 +244,7 @@ Location は `INTERNAL_BASE_URL` + `req.uri().path_and_query()` で、authority 
 
 `MEDIA_ALLOWED_PREFIXES` は `https://host[:port][/path-prefix]` のカンマ区切り。
 候補と同じ `url` クレートでパースして比較するので、IDN・大小文字・既定ポートの
-扱いが対称になる。
+扱いが対称になる。非 ASCII のホスト（IDN）のエントリは黙って punycode に正規化されて許可される（`allowed_prefixes_accept_an_idn_written_either_way` が固定している設計）ので、運用者は punycode で書くこと。同形異義文字のタイポは、意図したものとは別のホストを許可することになる。
 
 | 規則 | 内容 |
 |---|---|
