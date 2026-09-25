@@ -24,7 +24,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::any;
 use tower::ServiceExt;
 
-use misskey_egress_proxy::config::{Config, ListenTarget};
+use misskey_egress_proxy::config::{Config, ListenTarget, MediaMode};
 use misskey_egress_proxy::proxy::{ProxyState, build_client};
 use misskey_egress_proxy::routes;
 
@@ -102,6 +102,8 @@ async fn build_app_with_static_dir(static_dir: PathBuf) -> Router {
         internal_base_url: INTERNAL_BASE_URL.to_string(),
         internal_referer_suffix: INTERNAL_SUFFIX.to_string(),
         static_dir,
+        media_mode: MediaMode::Proxy,
+        media_allowed_prefixes: vec![],
     });
     let proxy_state = ProxyState {
         client: build_client(),

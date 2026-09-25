@@ -27,7 +27,7 @@ use axum::routing::any;
 use tower::ServiceExt;
 use url::{Host, ParseError, Url, form_urlencoded};
 
-use misskey_egress_proxy::config::{Config, ListenTarget};
+use misskey_egress_proxy::config::{Config, ListenTarget, MediaMode};
 use misskey_egress_proxy::proxy::{ProxyState, build_client};
 use misskey_egress_proxy::routes;
 
@@ -151,6 +151,8 @@ async fn build_app() -> Router {
         internal_base_url: INTERNAL_BASE_URL.to_string(),
         internal_referer_suffix: INTERNAL_SUFFIX.to_string(),
         static_dir: PathBuf::from("/path/that/does/not/exist"),
+        media_mode: MediaMode::Proxy,
+        media_allowed_prefixes: vec![],
     });
     let proxy_state = ProxyState {
         client: build_client(),
