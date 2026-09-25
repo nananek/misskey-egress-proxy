@@ -49,14 +49,8 @@ pub async fn redirect_media(
     req: Request,
     next: Next,
 ) -> Response {
-    let path_and_query = req
-        .uri()
-        .path_and_query()
-        .map(|pq| pq.as_str().to_string())
-        .unwrap_or_else(|| "/".to_string());
-
     if referer_is_internal(&req, &config) {
-        return match internal_location(&config.internal_base_url, &path_and_query) {
+        return match internal_location(&config.internal_base_url, path_and_query(&req)) {
             Ok(location) => redirect_to(req, location).await,
             Err(rule) => refuse(req, "internal redirect", rule).await,
         };
@@ -69,12 +63,18 @@ pub async fn redirect_media(
             reject::not_found(req).await
         }
         MediaMode::Redirect => {
-            match original_location(&config.media_allowed_prefixes, &path_and_query) {
+            match original_location(&config.media_allowed_prefixes, path_and_query(&req)) {
                 Ok(location) => redirect_to(req, location).await,
                 Err(rule) => refuse(req, "original url", rule).await,
             }
         }
     }
+}
+
+/// The request-target's path and query, borrowed: `proxy` mode passes almost
+/// every media request straight through, so nothing here may copy it.
+fn path_and_query(req: &Request) -> &str {
+    req.uri().path_and_query().map_or("/", |pq| pq.as_str())
 }
 
 fn referer_is_internal(req: &Request, config: &Config) -> bool {
