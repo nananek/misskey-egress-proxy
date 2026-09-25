@@ -502,6 +502,18 @@ fn a_bad_media_setting_stops_the_proxy_at_startup_and_names_it() {
             ],
             vec!["INTERNAL_BASE_URL"],
         ),
+        // An empty suffix would make every Referer internal; refused in both modes.
+        (
+            vec![("INTERNAL_REFERER_SUFFIX", "")],
+            vec!["INTERNAL_REFERER_SUFFIX"],
+        ),
+        (
+            vec![
+                ("MEDIA_MODE", "redirect"),
+                ("INTERNAL_REFERER_SUFFIX", "  "),
+            ],
+            vec!["INTERNAL_REFERER_SUFFIX"],
+        ),
     ] {
         let misskey = unique_path("misskey");
         let listen = unique_path("egress");

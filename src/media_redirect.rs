@@ -83,8 +83,16 @@ fn referer_is_internal(req: &Request, config: &Config) -> bool {
         .and_then(|v| v.to_str().ok())
         .and_then(|referer| url::Url::parse(referer).ok())
         .and_then(|url| url.host_str().map(|h| h.to_string()))
-        .map(|host| host.ends_with(config.internal_referer_suffix.as_str()))
+        .map(|host| host_is_internal(&host, &config.internal_referer_suffix))
         .unwrap_or(false)
+}
+
+/// Whether a `Referer`'s host falls under the internal suffix. An empty suffix
+/// is never a match: `ends_with("")` is true for every host, and startup
+/// refuses an empty value, but this must not be the only thing standing
+/// between a misconfiguration and every `Referer` counting as internal.
+fn host_is_internal(host: &str, suffix: &str) -> bool {
+    !suffix.is_empty() && host.ends_with(suffix)
 }
 
 async fn refuse(req: Request, what: &str, rule: impl std::fmt::Debug) -> Response {
@@ -107,4 +115,28 @@ async fn redirect_to(req: Request, location: String) -> Response {
     let mut response = StatusCode::FOUND.into_response();
     response.headers_mut().insert(header::LOCATION, location);
     response
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_empty_suffix_matches_no_host() {
+        for host in ["", "example.com", "misskey.internal.example.ts.net"] {
+            assert!(!host_is_internal(host, ""), "{host:?}");
+        }
+    }
+
+    #[test]
+    fn a_dotted_suffix_matches_the_hosts_under_it() {
+        assert!(host_is_internal(
+            "misskey.internal.example.ts.net",
+            ".internal.example.ts.net"
+        ));
+        assert!(!host_is_internal(
+            "evil.example",
+            ".internal.example.ts.net"
+        ));
+    }
 }

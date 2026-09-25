@@ -4,6 +4,8 @@
 //! Adversarial checks, written from an attacker's side, on how the media
 //! routes treat input that is built to look like something else:
 //!
+//! - an empty `INTERNAL_REFERER_SUFFIX`, which must not make every `Referer`
+//!   internal,
 //! - a method override header on a `POST`,
 //! - an allowlist prefix written with a percent-escape,
 //! - quotes in the query of an original URL,
@@ -74,6 +76,31 @@ fn location(resp: &Response) -> Option<String> {
     resp.headers()
         .get("location")
         .map(|v| v.to_str().unwrap().to_string())
+}
+
+/// An empty suffix would make `host.ends_with("")` true for every host, so
+/// *any* `Referer` (a browser's ordinary one, not a forged one) would turn a
+/// media request into a `302` naming the internal host. Startup refuses an
+/// empty value, and the matcher must not depend on that.
+#[tokio::test]
+async fn an_empty_internal_referer_suffix_must_not_make_every_referer_internal() {
+    let foreign = [("referer", "https://unrelated.example/")];
+
+    let app = build(MediaMode::Redirect, "", vec![]);
+    let resp = get(&app, "/files/x", &foreign).await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::NOT_FOUND,
+        "a foreign Referer is not internal; got {:?}",
+        location(&resp)
+    );
+
+    // In `proxy` mode the request is relayed (to the dead socket here), not
+    // redirected to the internal host.
+    let app = build(MediaMode::Proxy, "", vec![]);
+    let resp = get(&app, "/files/x", &foreign).await;
+    assert_eq!(resp.status(), StatusCode::BAD_GATEWAY);
+    assert_eq!(location(&resp), None);
 }
 
 /// `X-HTTP-Method-Override` is a header some front-ends honour. This proxy must

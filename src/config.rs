@@ -115,8 +115,10 @@ impl Config {
                 .map(PathBuf::from)
                 .map_err(|_| "MISSKEY_SOCKET env var is required".to_string())?,
             internal_base_url,
-            internal_referer_suffix: env::var("INTERNAL_REFERER_SUFFIX")
-                .map_err(|_| "INTERNAL_REFERER_SUFFIX env var is required".to_string())?,
+            internal_referer_suffix: parse_referer_suffix(
+                &env::var("INTERNAL_REFERER_SUFFIX")
+                    .map_err(|_| "INTERNAL_REFERER_SUFFIX env var is required".to_string())?,
+            )?,
             static_dir: env::var("STATIC_DIR")
                 .map(PathBuf::from)
                 .unwrap_or_else(|_| PathBuf::from("/usr/local/share/misskey-egress-proxy")),
@@ -151,6 +153,20 @@ pub fn parse_media_mode(raw: Option<&str>) -> Result<MediaMode, String> {
             "MEDIA_MODE must be `proxy` or `redirect`, got {raw:?}"
         )),
     }
+}
+
+/// `INTERNAL_REFERER_SUFFIX`: required in both modes, and never empty. An empty
+/// suffix matches every host, so every `Referer`, not just a forged one, would
+/// count as internal and be sent to `INTERNAL_BASE_URL`.
+pub fn parse_referer_suffix(raw: &str) -> Result<String, String> {
+    if raw.trim().is_empty() {
+        return Err(
+            "INTERNAL_REFERER_SUFFIX must not be empty: an empty suffix would treat every \
+             Referer as internal"
+                .to_string(),
+        );
+    }
+    Ok(raw.to_string())
 }
 
 /// Checks `INTERNAL_BASE_URL` (after its trailing `/` is trimmed) for use as
@@ -272,6 +288,18 @@ mod tests {
             let err = parse_media_mode(Some(raw)).unwrap_err();
             assert!(err.contains("MEDIA_MODE"), "{raw:?}: {err}");
         }
+    }
+
+    #[test]
+    fn an_empty_or_blank_referer_suffix_is_an_error_that_names_the_variable() {
+        for raw in ["", " ", "\t", " \n "] {
+            let err = parse_referer_suffix(raw).unwrap_err();
+            assert!(err.contains("INTERNAL_REFERER_SUFFIX"), "{raw:?}: {err}");
+        }
+        assert_eq!(
+            parse_referer_suffix(".your-tailnet.ts.net").unwrap(),
+            ".your-tailnet.ts.net"
+        );
     }
 
     #[test]

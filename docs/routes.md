@@ -160,8 +160,12 @@ typo を実行時の 404 ではなく起動失敗にするため。`MEDIA_ALLOWE
 `Referer` のホストが `INTERNAL_REFERER_SUFFIX`（例: `.your-tailnet.ts.net`）に
 一致する場合、バイトを中継せず `INTERNAL_BASE_URL` へ 302 リダイレクトする。
 帯域節約の最適化であり、セキュリティ境界ではない。`Referer` は容易に偽装できるが、
-偽装して得られるのは Tailnet 宛の行き止まりの 302 だけである。一致判定は
-`ends_with` で、ドット境界は見ない（`.` 付きの suffix を書く前提）。
+偽装して得られるのは Tailnet 宛の行き止まりの 302 だけである。
+`INTERNAL_REFERER_SUFFIX` は両モードで必須で、空（空白のみを含む）は起動時エラー。
+空の suffix はあらゆるホストに一致し、偽装していない通常の `Referer` まで内部扱いに
+なって `INTERNAL_BASE_URL` へ 302 されるため。判定側も、suffix が空なら常に不一致とする
+（起動時の拒否だけに頼らない）。一致判定は `ends_with` で、ドット境界は見ない
+（`.` 付きの suffix を書く前提）。
 
 `redirect` モードでもこの経路を残すのは、運用者自身の UI（Tailnet 経由）が
 公開ドメインの `/proxy` を内部 Referer 付きで叩くため。ここを外すと本人の
