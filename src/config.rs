@@ -4,7 +4,7 @@
 use std::env;
 use std::path::PathBuf;
 
-use crate::media_target::AllowedPrefix;
+use crate::media_target::{AllowedPrefix, parse_allowed_prefixes};
 
 /// Where the proxy accepts requests from the TLS terminator in front of it.
 ///
@@ -95,8 +95,7 @@ impl Config {
         let media_allowed_prefixes = match media_mode {
             MediaMode::Redirect => {
                 validate_internal_base_url(&internal_base_url)?;
-                // Placeholder until `parse_allowed_prefixes` exists.
-                Vec::new()
+                parse_allowed_prefixes(optional_env("MEDIA_ALLOWED_PREFIXES")?.as_deref())?
             }
             MediaMode::Proxy => {
                 if optional_env("MEDIA_ALLOWED_PREFIXES")?.is_some_and(|v| !v.trim().is_empty()) {
