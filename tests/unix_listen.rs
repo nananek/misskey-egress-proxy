@@ -578,6 +578,61 @@ fn proxy_mode_ignores_the_allowed_prefixes() {
     cleanup(&mut proxy, &listen, &misskey);
 }
 
+/// Runs the proxy with `RUST_LOG=warn` until it listens, stops it, and returns
+/// everything it wrote to stdout and stderr (`tracing_subscriber::fmt` logs to
+/// stdout).
+fn startup_log_at_warn(extra_env: &[(&str, &str)]) -> String {
+    let misskey = unique_path("misskey");
+    let listen = unique_path("egress");
+    spawn_mock_misskey(&misskey);
+    let mut env = vec![("RUST_LOG", "warn")];
+    env.extend_from_slice(extra_env);
+    let mut proxy = proxy_command(&listen, &misskey, &env)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn misskey-egress-proxy");
+    wait_until_connectable(&listen);
+    let _ = proxy.kill();
+    let _ = proxy.wait();
+
+    let mut log = String::new();
+    let _ = proxy
+        .stdout
+        .take()
+        .expect("piped stdout")
+        .read_to_string(&mut log);
+    let _ = proxy
+        .stderr
+        .take()
+        .expect("piped stderr")
+        .read_to_string(&mut log);
+    let _ = std::fs::remove_file(&listen);
+    let _ = std::fs::remove_file(&misskey);
+    log
+}
+
+/// The README and `docs/routes.md` promise a `warn` when `MEDIA_ALLOWED_PREFIXES`
+/// is set in `proxy` mode, where it does nothing. It appears then, and not when
+/// the variable is unset, blank, or actually in use.
+#[test]
+fn proxy_mode_warns_only_when_the_allowed_prefixes_are_set_to_something() {
+    const WARNING: &str = "MEDIA_ALLOWED_PREFIXES is ignored";
+    let set = ("MEDIA_ALLOWED_PREFIXES", "https://s3.example.com/bucket/");
+
+    let log = startup_log_at_warn(&[set]);
+    assert!(log.contains(WARNING), "no warning in {log:?}");
+
+    for (case, env) in [
+        ("unset", vec![]),
+        ("blank", vec![("MEDIA_ALLOWED_PREFIXES", " ")]),
+        ("redirect mode", vec![("MEDIA_MODE", "redirect"), set]),
+    ] {
+        let log = startup_log_at_warn(&env);
+        assert!(!log.contains(WARNING), "{case}: {log:?}");
+    }
+}
+
 /// W6: redirect mode with no `MEDIA_ALLOWED_PREFIXES` at all starts, refuses
 /// every original URL and every `/files/*` without an internal Referer, and
 /// still redirects an internal one. The upstream is never dialled.
