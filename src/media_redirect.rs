@@ -44,6 +44,15 @@ use crate::reject;
 /// Every refusal is a 404 that drains the request body first (see
 /// `src/reject.rs`), and is logged at debug level as the rule that refused
 /// it: never the `url` the caller supplied.
+///
+/// **Caching.** The same URL is answered differently depending on the
+/// `Referer` (an internal one is sent to the internal host, anyone else gets
+/// the original URL or a 404), and a shared cache in front of this proxy does
+/// not know that. So every 302 and 404 produced here carries
+/// `Cache-Control: no-store`; otherwise an internal `Location` (with the
+/// internal host name in it) could be handed to an outsider, or an outsider's
+/// 404 to the operator's own UI. What `forward` returns, and what any other
+/// route returns, is left exactly as it was.
 pub async fn redirect_media(
     State(config): State<Arc<Config>>,
     req: Request,
@@ -60,7 +69,7 @@ pub async fn redirect_media(
         MediaMode::Proxy => next.run(req).await,
         MediaMode::Redirect if req.uri().path().starts_with("/files/") => {
             tracing::debug!("/files/ request without an internal Referer refused in redirect mode");
-            reject::not_found(req).await
+            not_found(req).await
         }
         MediaMode::Redirect => {
             match original_location(&config.media_allowed_prefixes, path_and_query(&req)) {
@@ -112,7 +121,19 @@ fn host_is_internal(host: &str, suffix: &str) -> bool {
 
 async fn refuse(req: Request, what: &str, rule: impl std::fmt::Debug) -> Response {
     tracing::debug!(?rule, "{what} refused");
-    reject::not_found(req).await
+    not_found(req).await
+}
+
+/// The 404 of this layer: `reject::not_found`, marked uncacheable.
+async fn not_found(req: Request) -> Response {
+    no_store(reject::not_found(req).await)
+}
+
+fn no_store(mut response: Response) -> Response {
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    response
 }
 
 /// `location` has already been through `media_target`, so it is printable
@@ -120,7 +141,7 @@ async fn refuse(req: Request, what: &str, rule: impl std::fmt::Debug) -> Respons
 /// a panic or a 500 if it ever is not.
 async fn redirect_to(req: Request, location: String) -> Response {
     let Ok(location) = HeaderValue::try_from(location) else {
-        return reject::not_found(req).await;
+        return not_found(req).await;
     };
 
     // A caller still writing a body would otherwise see the connection die
@@ -129,7 +150,7 @@ async fn redirect_to(req: Request, location: String) -> Response {
 
     let mut response = StatusCode::FOUND.into_response();
     response.headers_mut().insert(header::LOCATION, location);
-    response
+    no_store(response)
 }
 
 #[cfg(test)]

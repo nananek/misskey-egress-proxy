@@ -65,7 +65,10 @@ citations into Misskey's own source — is in [`docs/routes.md`](docs/routes.md)
     deployment as before, `/proxy/*?url=` is redirected to the original
     URL when it falls under an allowed prefix (`MEDIA_ALLOWED_PREFIXES`)
     and is a 404 otherwise, and `/files/*` without an internal `Referer`
-    is a 404. See [`docs/routes.md`](docs/routes.md) for the rules.
+    is a 404. Every 302 and 404 that this layer answers itself carries
+    `Cache-Control: no-store`, because the answer for one URL depends on the
+    `Referer` and a shared cache in front must not keep it. See
+    [`docs/routes.md`](docs/routes.md) for the rules.
 - **No TLS in this process.** Put a TLS terminator (Caddy, Cloudflare
   Tunnel, ...) in front of it; this binary only ever speaks plain HTTP.
   It can accept that terminator's requests over a Unix socket rather than

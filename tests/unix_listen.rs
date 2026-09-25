@@ -771,6 +771,12 @@ fn redirect_mode_without_an_allowlist_starts_and_refuses_everything_external() {
             "{target}: {response}"
         );
         assert_eq!(header(&response, "location"), None, "{target}");
+        // Over the wire too: a shared cache in front must not keep it.
+        assert_eq!(
+            header(&response, "cache-control"),
+            Some("no-store"),
+            "{target}: {response}"
+        );
     }
 
     let response = request(&listen, "/files/x", INTERNAL_REFERER);
@@ -783,6 +789,7 @@ fn redirect_mode_without_an_allowlist_starts_and_refuses_everything_external() {
         Some("https://internal.example.ts.net/files/x"),
         "{response}"
     );
+    assert_eq!(header(&response, "cache-control"), Some("no-store"));
     assert_eq!(upstream.load(Ordering::SeqCst), 0);
 
     cleanup(&mut proxy, &listen, &misskey);

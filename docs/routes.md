@@ -162,6 +162,14 @@ typo を実行時の 404 ではなく起動失敗にするため。`MEDIA_ALLOWE
 `RUST_LOG` で有効にする（未設定だと ERROR しか出ない）ので、上の `warn` ログも
 拒否の理由も、`RUST_LOG=warn` / `RUST_LOG=debug` を設定しないと見えない。
 
+`redirect_media` 自身が返す 302 と 404（内部 Referer の 302、元 URL への 302、各種の拒否）には
+`Cache-Control: no-store` を付ける。同じ URL でも `Referer` によって結果が変わる（内部 Referer は
+内部ホストへの 302、それ以外は元 URL への 302 か 404）のに、前段の共有キャッシュ（配備先の
+cloudflared / Cloudflare は、拡張子付きのパスを既定でキャッシュ対象にしうる）はそれを知らないので、
+保存されると、内部ホスト名入りの `Location` が外部の利用者に配られたり、外部の 404 が運用者自身の
+UI に配られたりするため。`forward` が返す応答（proxy モードの転送、Misskey が返すもの）と他の
+ルートの応答（フォールバックの 404、405、非 media のルート）には付けない。
+
 ### 内部 Referer リダイレクト（両モード共通）
 
 `Referer` のホストが `INTERNAL_REFERER_SUFFIX`（例: `.your-tailnet.ts.net`）に

@@ -907,3 +907,108 @@ async fn proxy_mode_still_relays_media_verbatim() {
         Some(format!("{INTERNAL_BASE_URL}/files/abc"))
     );
 }
+
+// ---------------------------------------------------------------------------
+// Cache-Control on what the media layer answers itself
+// ---------------------------------------------------------------------------
+//
+// The same URL is a 302 to the internal host for a caller with an internal
+// `Referer` and a 302 to the original URL (or a 404) for everyone else, so an
+// answer kept by a shared cache in front of this proxy would be handed to the
+// wrong caller: an internal `Location` (with the internal host name in it) to
+// an outsider, or an outsider's 404 to the operator's own UI.
+
+fn cache_control(resp: &Response) -> Option<String> {
+    resp.headers()
+        .get("cache-control")
+        .map(|v| v.to_str().unwrap().to_string())
+}
+
+/// Every 302 and every 404 that `redirect_media` itself produces is
+/// `Cache-Control: no-store`: the internal redirect (in both modes), the
+/// redirect to an original URL, and each kind of refusal.
+#[tokio::test]
+async fn what_the_media_layer_answers_itself_is_not_cacheable() {
+    let allowed_url = "/proxy/i.webp?url=https%3A%2F%2Fs3.example.com%2Fbucket%2Fa.png";
+    let refused_url = "/proxy/i.webp?url=https%3A%2F%2Fevil.example%2Fa.png";
+
+    for mode in [MediaMode::Proxy, MediaMode::Redirect] {
+        let app = build_app_with(
+            mode,
+            allowed_set(),
+            dead_socket(),
+            PathBuf::from(NO_SUCH_DIR),
+        );
+
+        // The internal redirect, and a refused internal target.
+        for method in ["GET", "HEAD"] {
+            let resp = call(&app, method, "/files/abc", &[INTERNAL_REFERER]).await;
+            assert_eq!(resp.status(), StatusCode::FOUND, "{mode:?} {method}");
+            assert_eq!(
+                cache_control(&resp).as_deref(),
+                Some("no-store"),
+                "{mode:?} {method} internal 302"
+            );
+        }
+        let resp = get(&app, "/files/../x", &[INTERNAL_REFERER]).await;
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND, "{mode:?}");
+        assert_eq!(
+            cache_control(&resp).as_deref(),
+            Some("no-store"),
+            "{mode:?} refused internal target"
+        );
+    }
+
+    let app = redirect_app(allowed_set());
+    for (target, status) in [
+        (allowed_url, StatusCode::FOUND),
+        (refused_url, StatusCode::NOT_FOUND),
+        ("/proxy/i.webp", StatusCode::NOT_FOUND),
+        ("/files/abc", StatusCode::NOT_FOUND),
+    ] {
+        for method in ["GET", "HEAD"] {
+            let resp = call(&app, method, target, &[]).await;
+            assert_eq!(resp.status(), status, "{method} {target}");
+            assert_eq!(
+                cache_control(&resp).as_deref(),
+                Some("no-store"),
+                "{method} {target}"
+            );
+        }
+    }
+}
+
+/// Nothing else gets the header: a response forwarded from Misskey, a 404 from
+/// the fallback, a 405, and a non-media route are exactly as they were.
+#[tokio::test]
+async fn responses_the_media_layer_does_not_produce_are_left_alone() {
+    let app = build_app().await;
+    for (method, target) in [
+        ("GET", "/files/abc"),
+        (
+            "GET",
+            "/proxy/i.webp?url=https%3A%2F%2Fs3.example.com%2Fbucket%2Fa.png",
+        ),
+        ("GET", "/nodeinfo/2.1"),
+        ("GET", "/api/meta"),
+        ("POST", "/files/abc"),
+    ] {
+        let resp = call(&app, method, target, &[EXTERNAL_REFERER]).await;
+        assert_eq!(cache_control(&resp), None, "{method} {target}");
+    }
+
+    let app = live_redirect_app(allowed_set()).await;
+    for (method, target) in [
+        ("GET", "/nodeinfo/2.1"),
+        ("GET", "/api/meta"),
+        ("POST", "/files/abc"),
+        ("POST", "/inbox"),
+    ] {
+        let resp = call(&app, method, target, &[]).await;
+        assert_eq!(
+            cache_control(&resp),
+            None,
+            "redirect mode: {method} {target}"
+        );
+    }
+}
