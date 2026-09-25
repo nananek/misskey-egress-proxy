@@ -197,7 +197,8 @@ fn is_printable_ascii(bytes: &[u8]) -> bool {
 /// The final check parses the result back: `http` lets a few characters
 /// through in a path (`"`, `{`, `}`, ...) that the `url` crate would rewrite,
 /// and a redirect whose target a WHATWG reader resolves differently from the
-/// bytes we wrote is not one to send.
+/// bytes we wrote is not one to send. That includes a `base` of its own: one
+/// with a dot-segment in its path (`https://h/..`) is refused, not sent.
 pub fn internal_location(base: &str, path_and_query: &str) -> Result<String, Reject> {
     if path_and_query.len() > MAX_TARGET_LEN {
         return Err(Reject::F1Len);
@@ -220,7 +221,10 @@ pub fn internal_location(base: &str, path_and_query: &str) -> Result<String, Rej
     let location = format!("{base}{path_and_query}");
     let parsed = Url::parse(&location).map_err(|_| Reject::F5ParseBack)?;
 
-    let expected_path = format!("{}{path}", base_url.path().trim_end_matches('/'));
+    // The path the `Location` must have is the base's path as it was written,
+    // not as the `url` crate reads it: a base ending in `/..` or `/%2e` reads
+    // as `/`, and the dot-segment would go out in the `Location` unresolved.
+    let expected_path = format!("{}{path}", raw_path_of(base)?.trim_end_matches('/'));
     let same_origin = parsed.scheme() == base_url.scheme()
         && parsed.host_str() == base_url.host_str()
         && parsed.port_or_known_default() == base_url.port_or_known_default();
@@ -231,6 +235,15 @@ pub fn internal_location(base: &str, path_and_query: &str) -> Result<String, Rej
     }
 
     Ok(location)
+}
+
+/// Everything in `base` after `scheme://authority`, as written.
+fn raw_path_of(base: &str) -> Result<&str, Reject> {
+    let (_, after_scheme) = base.split_once("://").ok_or(Reject::F5ParseBack)?;
+    let end = after_scheme
+        .find(['/', '?', '#'])
+        .unwrap_or(after_scheme.len());
+    Ok(&after_scheme[end..])
 }
 
 // ---------------------------------------------------------------------------
@@ -663,6 +676,25 @@ mod tests {
             internal_location("https://h.example/prefix", "/files/x"),
             Ok("https://h.example/prefix/files/x".to_string())
         );
+    }
+
+    #[test]
+    fn internal_location_refuses_a_base_whose_written_path_would_be_resolved() {
+        for base in [
+            "https://h.example/..",
+            "https://h.example/.",
+            "https://h.example/%2e",
+            "https://h.example/%2E%2E",
+            "https://h.example/a/./b",
+            "https://h.example/a/../b",
+            "https://h.example/a\\b",
+        ] {
+            assert_eq!(
+                internal_location(base, "/files/x"),
+                Err(Reject::F5ParseBack),
+                "{base:?}"
+            );
+        }
     }
 
     #[test]

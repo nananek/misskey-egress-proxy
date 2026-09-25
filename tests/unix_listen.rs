@@ -502,6 +502,25 @@ fn a_bad_media_setting_stops_the_proxy_at_startup_and_names_it() {
             ],
             vec!["INTERNAL_BASE_URL"],
         ),
+        // The base is judged as written: what the `url` crate would normalise
+        // these to is not what goes into a `Location`.
+        (
+            vec![
+                ("MEDIA_MODE", "redirect"),
+                ("INTERNAL_BASE_URL", "https://internal.example.ts.net/.."),
+            ],
+            vec!["INTERNAL_BASE_URL", "/.."],
+        ),
+        (
+            vec![
+                ("MEDIA_MODE", "redirect"),
+                (
+                    "INTERNAL_BASE_URL",
+                    "https://internal.example.ts.net:000443",
+                ),
+            ],
+            vec!["INTERNAL_BASE_URL", "000443"],
+        ),
         // An empty suffix would make every Referer internal; refused in both modes.
         (
             vec![("INTERNAL_REFERER_SUFFIX", "")],

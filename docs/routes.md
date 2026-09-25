@@ -146,7 +146,13 @@ find-my-way はルーティング前に `safeDecodeURI` + `decodeURI` で
 `MEDIA_MODE` の未知値・空文字は起動時エラー。`redirect` モードでは
 `INTERNAL_BASE_URL` も起動時に検証する（http/https の origin のみ。userinfo・
 query・fragment・パスは不可。空白・制御文字・`\`・非 ASCII も不可なので、IDN の
-ホストは punycode で書く）。内部 Referer の 302 がこの値に依存するので、
+ホストは punycode で書く）。検証は**書かれた文字列**に対して行い、`url` クレートが
+正規化した後の姿では見ない。`Location` に出るのは書かれたままの文字列なので、
+`https://h/..` や `https://h/%2e`（正規化すると path が `/` になる）、`https://h:000443`、
+`https://%68`、`https://h:443`、`https://H` のように、クレートが書き換える綴りは、
+`https://h` の形（小文字、既定ポートなし、先頭ゼロなし、パーセントエンコードなし、
+パスなし）に直すよう示して拒否する（末尾ドットの `https://h.` は正規形なので通す）。
+内部 Referer の 302 がこの値に依存するので、
 typo を実行時の 404 ではなく起動失敗にするため。`MEDIA_ALLOWED_PREFIXES` は
 `proxy` モードでは検証せず無視する（設定されていれば `warn` ログ）。
 
@@ -192,7 +198,7 @@ Location は `INTERNAL_BASE_URL` + `req.uri().path_and_query()` で、authority 
 | F2 | 全体が印字可能 ASCII（0x21–0x7E）で、生の `\` を含まない |
 | F3 | path（最初の `?` の前）が `/files/` か `/proxy/` で始まる |
 | F4 | path が `path_is_safe` を通る（query は不透明。こちらでデコードする層が無いので `%00` などもエンコードのまま渡り、ヘッダ注入にならない） |
-| F5 | `INTERNAL_BASE_URL + path?query` を `url` クレートで再パースし、scheme / host / port が base と一致し、userinfo・fragment が無く、パスが `base のパス + 生のパス` とバイト一致する（WHATWG による正規化・再エンコード・`\` → `/`・dot-segment 解決が起きていない） |
+| F5 | `INTERNAL_BASE_URL + path?query` を `url` クレートで再パースし、scheme / host / port が base と一致し、userinfo・fragment が無く、パスが `base の書かれたままのパス + 生のパス` とバイト一致する（WHATWG による正規化・再エンコード・`\` → `/`・dot-segment 解決が起きていない。base 自身に `/..` や `/%2e` があれば、正規化後のパスは合っても書かれたパスとは一致せず、ここで落ちる。`proxy` モードは起動時に base を検証しないので、この検査が最後の砦になる） |
 
 `path_is_safe` は、各セグメントについて次を要求する。空でない（空セグメント `//`
 と末尾 `/` を拒否）。**最大8段のパーセントデコードのどの段でも** `.` / `..`、`/`、

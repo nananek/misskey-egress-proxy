@@ -178,6 +178,14 @@ pub fn parse_referer_suffix(raw: &str) -> Result<String, String> {
 
 /// Checks `INTERNAL_BASE_URL` (after its trailing `/` is trimmed) for use as
 /// a redirect base: an `http(s)` origin with a host and nothing else.
+///
+/// The string is judged as written, not as the `url` crate reads it: what is
+/// sent in a `Location` is this string, so a raw `/..`, a `/%2e` or a
+/// `:000443` that the crate would normalise away must not get through on the
+/// strength of what it would normalise to. The written form has to be exactly
+/// `scheme://host[:port]` in the crate's own normal form (lowercase, no
+/// default port, no leading zeros, no percent-escapes). A trailing dot on the
+/// host (`https://h.`) is a normal form and is accepted.
 pub fn validate_internal_base_url(base: &str) -> Result<(), String> {
     let bad = |why: &str| format!("INTERNAL_BASE_URL {base:?} is not usable: {why}");
 
@@ -193,9 +201,9 @@ pub fn validate_internal_base_url(base: &str) -> Result<(), String> {
     if !matches!(url.scheme(), "http" | "https") {
         return Err(bad("the scheme must be http or https"));
     }
-    if url.host_str().is_none_or(str::is_empty) {
+    let Some(host) = url.host_str().filter(|host| !host.is_empty()) else {
         return Err(bad("it has no host"));
-    }
+    };
     if !url.username().is_empty() || url.password().is_some() {
         return Err(bad("it must not carry userinfo"));
     }
@@ -204,6 +212,17 @@ pub fn validate_internal_base_url(base: &str) -> Result<(), String> {
     }
     if url.path() != "/" {
         return Err(bad("it must not carry a path"));
+    }
+
+    let canonical = match url.port() {
+        Some(port) => format!("{}://{host}:{port}", url.scheme()),
+        None => format!("{}://{host}", url.scheme()),
+    };
+    if base != canonical {
+        return Err(bad(&format!(
+            "write it as {canonical:?}: an origin with no path at all (not even `.` or `%2e`), \
+             in lowercase, without the default port, leading zeros or percent-escapes"
+        )));
     }
     Ok(())
 }
@@ -326,9 +345,37 @@ mod tests {
             "https://h",
             "https://h:8443",
             "http://100.64.0.1:3000",
+            "http://[::1]:3000",
             "https://misskey.your-tailnet.ts.net",
+            // A trailing dot is the host's normal form.
+            "https://h.",
         ] {
             assert!(validate_internal_base_url(base).is_ok(), "{base}");
+        }
+    }
+
+    /// The `url` crate reads each of these as a bare origin (a path that
+    /// normalises to `/`, a spelling it rewrites), but the string that would
+    /// go into a `Location` is the one written.
+    #[test]
+    fn an_internal_base_url_is_judged_as_written_not_as_normalised() {
+        for base in [
+            "https://h/..",
+            "https://h/.",
+            "https://h/%2e",
+            "https://h/%2E%2e",
+            "https://h/x/..",
+            "https://h:000443",
+            "https://h:443",
+            "http://h:80",
+            "https://%68",
+            "https://H",
+            "HTTP://h",
+            "https://0x7f.1",
+            "https://h/",
+        ] {
+            let err = validate_internal_base_url(base).unwrap_err();
+            assert!(err.contains("INTERNAL_BASE_URL"), "{base:?}: {err}");
         }
     }
 

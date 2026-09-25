@@ -7,6 +7,8 @@
 //! - an empty `INTERNAL_REFERER_SUFFIX`, which must not make every `Referer`
 //!   internal, and one written without its leading dot, which matches on a dot
 //!   boundary,
+//! - an `INTERNAL_BASE_URL` with a dot-segment in it, which must not reach a
+//!   `Location`,
 //! - a method override header on a `POST`,
 //! - an allowlist prefix written with a percent-escape,
 //! - quotes in the query of an original URL,
@@ -26,8 +28,10 @@ use axum::http::{Request, StatusCode};
 use axum::response::Response;
 use tower::ServiceExt;
 
-use misskey_egress_proxy::config::{Config, ListenTarget, MediaMode};
-use misskey_egress_proxy::media_target::{AllowedPrefix, parse_allowed_prefixes};
+use misskey_egress_proxy::config::{Config, ListenTarget, MediaMode, validate_internal_base_url};
+use misskey_egress_proxy::media_target::{
+    AllowedPrefix, internal_location, parse_allowed_prefixes,
+};
 use misskey_egress_proxy::proxy::{ProxyState, build_client};
 use misskey_egress_proxy::routes;
 
@@ -39,11 +43,20 @@ fn dead_socket() -> PathBuf {
 }
 
 fn build(mode: MediaMode, suffix: &str, allowed: Vec<AllowedPrefix>) -> Router {
+    build_with_base(mode, suffix, allowed, INTERNAL_BASE)
+}
+
+fn build_with_base(
+    mode: MediaMode,
+    suffix: &str,
+    allowed: Vec<AllowedPrefix>,
+    internal_base_url: &str,
+) -> Router {
     let socket = dead_socket();
     let config = Arc::new(Config {
         listen: ListenTarget::Tcp("127.0.0.1:0".to_string()),
         misskey_socket: socket.clone(),
-        internal_base_url: INTERNAL_BASE.to_string(),
+        internal_base_url: internal_base_url.to_string(),
         internal_referer_suffix: suffix.to_string(),
         static_dir: PathBuf::from(NO_DIR),
         media_mode: mode,
@@ -136,6 +149,56 @@ async fn a_suffix_without_a_dot_boundary_must_not_match_a_longer_host() {
             Some(format!("{INTERNAL_BASE}/files/x")),
             "{internal}"
         );
+    }
+}
+
+/// `validate_internal_base_url` must judge the raw string. A raw path made
+/// only of dot-segments normalises to `/`, and a percent-encoded dot (`%2e`)
+/// to a single-dot segment, so a check on the normalised path would let them
+/// through as "no path" while the raw string, which is what ends up in the
+/// `Location`, still carries one.
+#[test]
+fn internal_base_url_validation_must_refuse_a_dot_segment_path() {
+    for base in [
+        "https://h/..",
+        "https://h/.",
+        "https://h/%2e",
+        "https://h/x/..",
+    ] {
+        assert!(
+            validate_internal_base_url(base).is_err(),
+            "{base:?} must not be a usable base: the raw string carries a path"
+        );
+    }
+}
+
+/// The internal `Location` is never the product of dot-segment resolution: a
+/// base that carries a raw `..` must not put it into a `Location`.
+#[test]
+fn internal_location_must_not_emit_a_dot_segment_from_the_base() {
+    match internal_location("https://h/..", "/files/x") {
+        Err(_) => {}
+        Ok(location) => assert!(
+            !location.contains("/../") && !location.contains("/./"),
+            "{location:?} still carries a dot-segment"
+        ),
+    }
+}
+
+/// Startup refuses such a base in `redirect` mode only; `proxy` mode does not
+/// validate it. In both, a request with an internal `Referer` gets a `404`
+/// rather than a `302` whose `Location` still carries the dot-segment.
+#[tokio::test]
+async fn a_base_with_a_dot_segment_never_becomes_a_location() {
+    let internal = [("referer", "https://misskey.internal.example.ts.net/")];
+
+    for mode in [MediaMode::Proxy, MediaMode::Redirect] {
+        for base in ["https://h/..", "https://h/%2e", "https://h/a/./b"] {
+            let app = build_with_base(mode, ".internal.example.ts.net", vec![], base);
+            let resp = get(&app, "/files/x", &internal).await;
+            assert_eq!(resp.status(), StatusCode::NOT_FOUND, "{mode:?} {base}");
+            assert_eq!(location(&resp), None, "{mode:?} {base}");
+        }
     }
 }
 
