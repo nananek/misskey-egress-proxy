@@ -147,10 +147,12 @@ find-my-way はルーティング前に `safeDecodeURI` + `decodeURI` で
 `INTERNAL_BASE_URL` も起動時に検証する（http/https の origin のみ。userinfo・
 query・fragment・パスは不可）。内部 Referer の 302 がこの値に依存するので、
 typo を実行時の 404 ではなく起動失敗にするため。`MEDIA_ALLOWED_PREFIXES` は
-`proxy` モードでは検証せず無視する（設定されていれば警告ログ）。
+`proxy` モードでは検証せず無視する（設定されていれば `warn` ログ）。
 
 拒否はすべて body を drain してから返す 404（`src/reject.rs`）。理由は debug
-ログに規則名だけ出し、呼び出し側が渡した `url` の値は出さない。
+ログに規則名だけ出し、呼び出し側が渡した `url` の値は出さない。ログは
+`RUST_LOG` で有効にする（未設定だと ERROR しか出ない）ので、上の `warn` ログも
+拒否の理由も、`RUST_LOG=warn` / `RUST_LOG=debug` を設定しないと見えない。
 
 ### 内部 Referer リダイレクト（両モード共通）
 

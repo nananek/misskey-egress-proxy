@@ -89,7 +89,7 @@ All via environment variables (see `src/config.rs`):
 | `INTERNAL_BASE_URL` | `https://misskey.your-tailnet.ts.net` | Redirect target for internal media callers. With `MEDIA_MODE=redirect` it is checked at startup: an `http(s)` origin only, no userinfo, query, fragment or path |
 | `INTERNAL_REFERER_SUFFIX` | `.your-tailnet.ts.net` | Hostname suffix that marks a `Referer` as internal. Required in both modes |
 | `MEDIA_MODE` | `proxy` (default), `redirect` | `proxy` relays `/files/*` and `/proxy/*` to Misskey (an internal `Referer` still gets the redirect). `redirect` never forwards them: see [Media mode](#media-mode). An unknown or empty value stops the proxy at startup |
-| `MEDIA_ALLOWED_PREFIXES` | `https://misskey.example.com/files/,https://r2.example.net/` | `redirect` mode only (ignored, with a warning, in `proxy` mode): comma-separated `https://host[:port][/path-prefix]` entries that a `/proxy/*?url=` request may be redirected to. Empty means every such request is a 404. An invalid entry stops the proxy at startup |
+| `MEDIA_ALLOWED_PREFIXES` | `https://misskey.example.com/files/,https://r2.example.net/` | `redirect` mode only (ignored in `proxy` mode, with a `warn` log if `RUST_LOG` lets it through): comma-separated `https://host[:port][/path-prefix]` entries that a `/proxy/*?url=` request may be redirected to. Empty means every such request is a 404. An invalid entry stops the proxy at startup |
 | `STATIC_DIR` | `/usr/local/share/misskey-egress-proxy` (default) | Directory containing optional `index.html` and `misskey.svg` overrides for the public landing page |
 
 The image includes a default page at `/`. To replace it without rebuilding,
