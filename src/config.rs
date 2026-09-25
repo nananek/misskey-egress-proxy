@@ -158,15 +158,22 @@ pub fn parse_media_mode(raw: Option<&str>) -> Result<MediaMode, String> {
 /// `INTERNAL_REFERER_SUFFIX`: required in both modes, and never empty. An empty
 /// suffix matches every host, so every `Referer`, not just a forged one, would
 /// count as internal and be sent to `INTERNAL_BASE_URL`.
+///
+/// The value is trimmed and lowercased here, because that is the form it is
+/// matched in: a `Referer`'s host reaches the matcher lowercased (the `url`
+/// crate does that), so a suffix with a capital letter, or with a space
+/// around it, would otherwise never match and switch the internal redirect off
+/// without a word.
 pub fn parse_referer_suffix(raw: &str) -> Result<String, String> {
-    if raw.trim().is_empty() {
+    let suffix = raw.trim().to_ascii_lowercase();
+    if suffix.is_empty() {
         return Err(
             "INTERNAL_REFERER_SUFFIX must not be empty: an empty suffix would treat every \
              Referer as internal"
                 .to_string(),
         );
     }
-    Ok(raw.to_string())
+    Ok(suffix)
 }
 
 /// Checks `INTERNAL_BASE_URL` (after its trailing `/` is trimmed) for use as
@@ -300,6 +307,17 @@ mod tests {
             parse_referer_suffix(".your-tailnet.ts.net").unwrap(),
             ".your-tailnet.ts.net"
         );
+    }
+
+    #[test]
+    fn a_referer_suffix_is_trimmed_and_lowercased() {
+        for (raw, expected) in [
+            (" .Your-Tailnet.TS.net\n", ".your-tailnet.ts.net"),
+            ("\tINTERNAL.example.ts.net ", "internal.example.ts.net"),
+            (".already.lower.example", ".already.lower.example"),
+        ] {
+            assert_eq!(parse_referer_suffix(raw).unwrap(), expected, "{raw:?}");
+        }
     }
 
     #[test]

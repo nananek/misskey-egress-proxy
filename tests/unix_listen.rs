@@ -645,6 +645,77 @@ fn proxy_mode_warns_only_when_the_allowed_prefixes_are_set_to_something() {
     }
 }
 
+/// `INTERNAL_REFERER_SUFFIX` is trimmed and lowercased when it is read: the
+/// host of a `Referer` reaches the matcher lowercased, so a capital letter or a
+/// space around the value would otherwise switch the internal redirect off
+/// without a word. And a suffix written without its leading dot matches on a
+/// dot boundary. Redirect mode, so a request that is not internal is a 404
+/// and the upstream is never dialled.
+#[test]
+fn the_referer_suffix_is_normalised_when_read_and_matched_on_a_dot_boundary() {
+    for (suffix, referer, internal) in [
+        (
+            " .INTERNAL.Example.TS.net\t",
+            "https://misskey.internal.example.ts.net/",
+            true,
+        ),
+        (
+            "Internal.Example.ts.NET",
+            "https://misskey.internal.example.ts.net/",
+            true,
+        ),
+        (
+            "internal.example.ts.net",
+            "https://internal.example.ts.net/",
+            true,
+        ),
+        (
+            "internal.example.ts.net",
+            "https://notinternal.example.ts.net/",
+            false,
+        ),
+        (
+            ".internal.example.ts.net",
+            "https://notinternal.example.ts.net/",
+            false,
+        ),
+    ] {
+        let misskey = unique_path("misskey");
+        let listen = unique_path("egress");
+        let upstream = spawn_counting_mock_misskey(&misskey);
+        let mut proxy = spawn_proxy_with(
+            &listen,
+            &misskey,
+            &[
+                ("MEDIA_MODE", "redirect"),
+                ("INTERNAL_REFERER_SUFFIX", suffix),
+            ],
+        );
+        wait_until_connectable(&listen);
+
+        let response = request(&listen, "/files/x", &format!("Referer: {referer}\r\n"));
+        let expected = if internal {
+            "HTTP/1.1 302"
+        } else {
+            "HTTP/1.1 404"
+        };
+        assert!(
+            status_line(&response).starts_with(expected),
+            "suffix {suffix:?}, Referer {referer}: {response}"
+        );
+        if internal {
+            assert_eq!(
+                header(&response, "location"),
+                Some("https://internal.example.ts.net/files/x"),
+                "suffix {suffix:?}: {response}"
+            );
+        }
+        assert_eq!(upstream.load(Ordering::SeqCst), 0);
+
+        cleanup(&mut proxy, &listen, &misskey);
+    }
+}
+
 /// W6: redirect mode with no `MEDIA_ALLOWED_PREFIXES` at all starts, refuses
 /// every original URL and every `/files/*` without an internal Referer, and
 /// still redirects an internal one. The upstream is never dialled.

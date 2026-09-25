@@ -164,8 +164,17 @@ typo を実行時の 404 ではなく起動失敗にするため。`MEDIA_ALLOWE
 `INTERNAL_REFERER_SUFFIX` は両モードで必須で、空（空白のみを含む）は起動時エラー。
 空の suffix はあらゆるホストに一致し、偽装していない通常の `Referer` まで内部扱いに
 なって `INTERNAL_BASE_URL` へ 302 されるため。判定側も、suffix が空なら常に不一致とする
-（起動時の拒否だけに頼らない）。一致判定は `ends_with` で、ドット境界は見ない
-（`.` 付きの suffix を書く前提）。
+（起動時の拒否だけに頼らない）。
+
+suffix は読み込み時に前後の空白を除いて小文字化する（`Referer` のホストは小文字で届くので、
+大文字を含む suffix や前後に空白のある suffix は、そのままだと一致せず、内部リダイレクトが
+黙って効かなくなるため）。一致判定は次のとおり。
+
+- `.` で始まる suffix（`.your-tailnet.ts.net`、推奨の書き方）: ホストがそれで終わる
+  （`ends_with`）なら内部。従来どおりで、裸のホスト `your-tailnet.ts.net` は一致しない。
+- `.` で始まらない suffix（`your-tailnet.ts.net`）: ホストがそれと完全一致するか、
+  `.` + suffix で終わる場合だけ内部。ラベル境界を見るので `notyour-tailnet.ts.net` は
+  内部ではない。
 
 `redirect` モードでもこの経路を残すのは、運用者自身の UI（Tailnet 経由）が
 公開ドメインの `/proxy` を内部 Referer 付きで叩くため。ここを外すと本人の

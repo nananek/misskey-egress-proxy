@@ -87,12 +87,27 @@ fn referer_is_internal(req: &Request, config: &Config) -> bool {
         .unwrap_or(false)
 }
 
-/// Whether a `Referer`'s host falls under the internal suffix. An empty suffix
-/// is never a match: `ends_with("")` is true for every host, and startup
-/// refuses an empty value, but this must not be the only thing standing
-/// between a misconfiguration and every `Referer` counting as internal.
+/// Whether a `Referer`'s host falls under the internal suffix (already
+/// trimmed and lowercased by `Config::from_env`, like the host).
+///
+/// - A suffix that starts with `.` (`.your-tailnet.ts.net`, the documented
+///   form) matches any host that ends with it, as it always has.
+/// - A suffix without the leading dot (`your-tailnet.ts.net`) matches that
+///   host and the hosts under it, on a label boundary: `notyour-tailnet.ts.net`
+///   is not internal.
+/// - An empty suffix never matches. `ends_with("")` is true for every host, and
+///   startup refuses an empty value, but this must not be the only thing
+///   standing between a misconfiguration and every `Referer` counting as
+///   internal.
 fn host_is_internal(host: &str, suffix: &str) -> bool {
-    !suffix.is_empty() && host.ends_with(suffix)
+    if suffix.is_empty() {
+        return false;
+    }
+    if suffix.starts_with('.') {
+        return host.ends_with(suffix);
+    }
+    host.strip_suffix(suffix)
+        .is_some_and(|rest| rest.is_empty() || rest.ends_with('.'))
 }
 
 async fn refuse(req: Request, what: &str, rule: impl std::fmt::Debug) -> Response {
@@ -128,15 +143,39 @@ mod tests {
         }
     }
 
+    /// The documented form: matched as `ends_with`, exactly as before.
     #[test]
     fn a_dotted_suffix_matches_the_hosts_under_it() {
-        assert!(host_is_internal(
-            "misskey.internal.example.ts.net",
-            ".internal.example.ts.net"
-        ));
-        assert!(!host_is_internal(
-            "evil.example",
-            ".internal.example.ts.net"
-        ));
+        let suffix = ".internal.example.ts.net";
+        for (host, expected) in [
+            ("misskey.internal.example.ts.net", true),
+            ("a.b.internal.example.ts.net", true),
+            // The bare name is not "under" a dotted suffix.
+            ("internal.example.ts.net", false),
+            ("notinternal.example.ts.net", false),
+            ("internal.example.ts.net.evil.example", false),
+            ("evil.example", false),
+            ("", false),
+        ] {
+            assert_eq!(host_is_internal(host, suffix), expected, "{host:?}");
+        }
+    }
+
+    #[test]
+    fn a_suffix_without_a_dot_matches_the_host_and_its_subdomains_only() {
+        let suffix = "internal.example.ts.net";
+        for (host, expected) in [
+            ("internal.example.ts.net", true),
+            ("misskey.internal.example.ts.net", true),
+            ("a.b.internal.example.ts.net", true),
+            ("notinternal.example.ts.net", false),
+            ("xinternal.example.ts.net", false),
+            ("internal.example.ts.net.evil.example", false),
+            ("example.ts.net", false),
+            ("evil.example", false),
+            ("", false),
+        ] {
+            assert_eq!(host_is_internal(host, suffix), expected, "{host:?}");
+        }
     }
 }

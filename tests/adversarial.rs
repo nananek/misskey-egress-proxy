@@ -5,7 +5,8 @@
 //! routes treat input that is built to look like something else:
 //!
 //! - an empty `INTERNAL_REFERER_SUFFIX`, which must not make every `Referer`
-//!   internal,
+//!   internal, and one written without its leading dot, which matches on a dot
+//!   boundary,
 //! - a method override header on a `POST`,
 //! - an allowlist prefix written with a percent-escape,
 //! - quotes in the query of an original URL,
@@ -101,6 +102,41 @@ async fn an_empty_internal_referer_suffix_must_not_make_every_referer_internal()
     let resp = get(&app, "/files/x", &foreign).await;
     assert_eq!(resp.status(), StatusCode::BAD_GATEWAY);
     assert_eq!(location(&resp), None);
+}
+
+/// A suffix written without its leading dot names a host and its subdomains,
+/// not every host that happens to end in the same characters: with
+/// `internal.example.ts.net`, `https://notinternal.example.ts.net/` is not
+/// internal, while the host itself and a subdomain are.
+#[tokio::test]
+async fn a_suffix_without_a_dot_boundary_must_not_match_a_longer_host() {
+    let app = build(MediaMode::Redirect, "internal.example.ts.net", vec![]);
+
+    let resp = get(
+        &app,
+        "/files/x",
+        &[("referer", "https://notinternal.example.ts.net/")],
+    )
+    .await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::NOT_FOUND,
+        "only a dot-boundary suffix match is internal; got {:?}",
+        location(&resp)
+    );
+
+    for internal in [
+        "https://internal.example.ts.net/",
+        "https://misskey.internal.example.ts.net/",
+    ] {
+        let resp = get(&app, "/files/x", &[("referer", internal)]).await;
+        assert_eq!(resp.status(), StatusCode::FOUND, "{internal}");
+        assert_eq!(
+            location(&resp),
+            Some(format!("{INTERNAL_BASE}/files/x")),
+            "{internal}"
+        );
+    }
 }
 
 /// `X-HTTP-Method-Override` is a header some front-ends honour. This proxy must
