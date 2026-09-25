@@ -4,6 +4,8 @@
 use std::env;
 use std::path::PathBuf;
 
+use crate::media_target::{AllowedPrefix, parse_allowed_prefixes};
+
 /// Where the proxy accepts requests from the TLS terminator in front of it.
 ///
 /// A Unix socket keeps the proxy off IP networking entirely (the container
@@ -22,6 +24,17 @@ pub enum ListenTarget {
     },
 }
 
+/// How `/files/*` and `/proxy/*` are answered.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum MediaMode {
+    /// Relay the request to Misskey over the UDS.
+    #[default]
+    Proxy,
+    /// Never hand a media request to Misskey: answer with a redirect (or a
+    /// 404) decided locally.
+    Redirect,
+}
+
 /// Runtime configuration, loaded entirely from environment variables.
 ///
 /// There is no config file: the proxy is deployed as a single container with
@@ -37,16 +50,26 @@ pub struct Config {
     /// Base URL of the internal (Tailscale-reachable) Misskey deployment,
     /// e.g. `https://misskey.tailnet-name.ts.net`. Used only to build the
     /// redirect target for `/files/*` and `/proxy/*` when the request looks
-    /// like it came from an internal caller.
+    /// like it came from an internal caller, in either `MEDIA_MODE`. In
+    /// `redirect` mode it is checked at startup (see
+    /// `validate_internal_base_url`).
     pub internal_base_url: String,
     /// Hostname suffix that identifies an internal `Referer`, e.g.
     /// `.tailnet-name.ts.net`. Any `Referer` whose host ends with this
-    /// suffix is treated as internal and redirected instead of proxied.
+    /// suffix is treated as internal and redirected instead of proxied (or,
+    /// in `redirect` mode, instead of being answered locally). Required in
+    /// both modes.
     pub internal_referer_suffix: String,
     /// Directory checked for replacements for the bundled landing page.
     /// Mounting a directory here can override `index.html` and
     /// `misskey.svg` without rebuilding the image.
     pub static_dir: PathBuf,
+    /// `MEDIA_MODE`: whether media requests are relayed (`proxy`, the
+    /// default) or answered locally (`redirect`).
+    pub media_mode: MediaMode,
+    /// `MEDIA_ALLOWED_PREFIXES`: the URL prefixes a `/proxy/*?url=` request
+    /// may be redirected to in `redirect` mode. Always empty in `proxy` mode.
+    pub media_allowed_prefixes: Vec<AllowedPrefix>,
 }
 
 /// Socket permissions used when `LISTEN_SOCKET_MODE` is unset: readable and
@@ -63,22 +86,189 @@ impl Config {
             env::var("LISTEN_SOCKET_MODE").ok().as_deref(),
         )?;
 
+        let media_mode = parse_media_mode(optional_env("MEDIA_MODE")?.as_deref())?;
+
+        let internal_base_url = env::var("INTERNAL_BASE_URL")
+            .map_err(|_| "INTERNAL_BASE_URL env var is required".to_string())?
+            .trim_end_matches('/')
+            .to_string();
+
+        // `INTERNAL_BASE_URL` is where an internal-`Referer` request is sent,
+        // so in `redirect` mode a typo there would turn every such redirect
+        // into a 404 at request time; refuse to start instead.
+        let media_allowed_prefixes = match media_mode {
+            MediaMode::Redirect => {
+                validate_internal_base_url(&internal_base_url)?;
+                parse_allowed_prefixes(optional_env("MEDIA_ALLOWED_PREFIXES")?.as_deref())?
+            }
+            MediaMode::Proxy => {
+                if optional_env("MEDIA_ALLOWED_PREFIXES")?.is_some_and(|v| !v.trim().is_empty()) {
+                    tracing::warn!("MEDIA_ALLOWED_PREFIXES is ignored unless MEDIA_MODE=redirect");
+                }
+                Vec::new()
+            }
+        };
+
         Ok(Self {
             listen,
             misskey_socket: env::var("MISSKEY_SOCKET")
                 .map(PathBuf::from)
                 .map_err(|_| "MISSKEY_SOCKET env var is required".to_string())?,
-            internal_base_url: env::var("INTERNAL_BASE_URL")
-                .map_err(|_| "INTERNAL_BASE_URL env var is required".to_string())?
-                .trim_end_matches('/')
-                .to_string(),
-            internal_referer_suffix: env::var("INTERNAL_REFERER_SUFFIX")
-                .map_err(|_| "INTERNAL_REFERER_SUFFIX env var is required".to_string())?,
+            internal_base_url,
+            internal_referer_suffix: parse_referer_suffix(
+                &env::var("INTERNAL_REFERER_SUFFIX")
+                    .map_err(|_| "INTERNAL_REFERER_SUFFIX env var is required".to_string())?,
+            )?,
             static_dir: env::var("STATIC_DIR")
                 .map(PathBuf::from)
                 .unwrap_or_else(|_| PathBuf::from("/usr/local/share/misskey-egress-proxy")),
+            media_mode,
+            media_allowed_prefixes,
         })
     }
+}
+
+/// Reads an optional variable, treating a value that is not valid Unicode as
+/// an error rather than as "unset": a mode or an allowlist that silently fell
+/// back to its default would be worse than a refusal to start.
+fn optional_env(name: &str) -> Result<Option<String>, String> {
+    match env::var(name) {
+        Ok(value) => Ok(Some(value)),
+        Err(env::VarError::NotPresent) => Ok(None),
+        Err(env::VarError::NotUnicode(_)) => Err(format!("{name} is not valid Unicode")),
+    }
+}
+
+/// `MEDIA_MODE`: unset means `proxy`; anything other than `proxy` /
+/// `redirect` (case and surrounding whitespace aside) is an error, including
+/// the empty string, so a typo does not quietly fall back to the default.
+pub fn parse_media_mode(raw: Option<&str>) -> Result<MediaMode, String> {
+    let Some(raw) = raw else {
+        return Ok(MediaMode::default());
+    };
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "proxy" => Ok(MediaMode::Proxy),
+        "redirect" => Ok(MediaMode::Redirect),
+        _ => Err(format!(
+            "MEDIA_MODE must be `proxy` or `redirect`, got {raw:?}"
+        )),
+    }
+}
+
+/// `INTERNAL_REFERER_SUFFIX`: required in both modes, and never empty. An empty
+/// suffix matches every host, so every `Referer`, not just a forged one, would
+/// count as internal and be sent to `INTERNAL_BASE_URL`.
+///
+/// The value is trimmed and lowercased here, because that is the form it is
+/// matched in: a `Referer`'s host reaches the matcher lowercased (the `url`
+/// crate does that), so a suffix with a capital letter, or with a space
+/// around it, would otherwise never match and switch the internal redirect off
+/// without a word.
+pub fn parse_referer_suffix(raw: &str) -> Result<String, String> {
+    let suffix = raw.trim().to_ascii_lowercase();
+    if suffix.is_empty() {
+        return Err(
+            "INTERNAL_REFERER_SUFFIX must not be empty: an empty suffix would treat every \
+             Referer as internal"
+                .to_string(),
+        );
+    }
+    if suffix.bytes().all(|b| b == b'.') {
+        return Err(format!(
+            "INTERNAL_REFERER_SUFFIX {raw:?} is nothing but dots: it names no host, and \
+             `.` would match every host written with a trailing dot"
+        ));
+    }
+    // A suffix is matched against a `Referer`'s host, which the `url` crate has
+    // made ASCII (punycode) and lowercase. One that could not be such a host, or
+    // could not be part of one, would never match and switch the internal
+    // redirect off without a word.
+    if !suffix
+        .bytes()
+        .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'.')
+    {
+        return Err(format!(
+            "INTERNAL_REFERER_SUFFIX {raw:?} may contain only ASCII letters, digits, `-` and \
+             `.`: write an internationalised name in punycode (`xn--...`)"
+        ));
+    }
+    // One leading and one trailing dot are fine (`.your-tailnet.ts.net`); an
+    // empty label anywhere else (`a..b`) is not a host name.
+    let labels = suffix.strip_prefix('.').unwrap_or(&suffix);
+    let labels = labels.strip_suffix('.').unwrap_or(labels);
+    if labels.split('.').any(str::is_empty) {
+        return Err(format!(
+            "INTERNAL_REFERER_SUFFIX {raw:?} has an empty label: at most one `.` at each end, \
+             and none in a row"
+        ));
+    }
+    Ok(suffix)
+}
+
+/// Checks `INTERNAL_BASE_URL` (after its trailing `/` is trimmed) for use as
+/// a redirect base: an `http(s)` origin with a host and nothing else.
+///
+/// The string is judged as written, not as the `url` crate reads it: what is
+/// sent in a `Location` is this string, so a raw `/..`, a `/%2e` or a
+/// `:000443` that the crate would normalise away must not get through on the
+/// strength of what it would normalise to. The written form has to be exactly
+/// `scheme://host[:port]` in the crate's own normal form (lowercase, no
+/// default port, no leading zeros, no percent-escapes). A trailing dot on the
+/// host (`https://h.`) is a normal form and is accepted.
+pub fn validate_internal_base_url(base: &str) -> Result<(), String> {
+    let bad = |why: &str| format!("INTERNAL_BASE_URL {base:?} is not usable: {why}");
+
+    if !base
+        .bytes()
+        .all(|b| (0x21..=0x7e).contains(&b) && b != b'\\')
+    {
+        return Err(bad(
+            "it contains whitespace, control or non-ASCII characters, or a backslash",
+        ));
+    }
+    let url = url::Url::parse(base).map_err(|e| bad(&e.to_string()))?;
+    if !matches!(url.scheme(), "http" | "https") {
+        return Err(bad("the scheme must be http or https"));
+    }
+    let Some(host) = url.host_str().filter(|host| !host.is_empty()) else {
+        return Err(bad("it has no host"));
+    };
+    if !url.username().is_empty() || url.password().is_some() {
+        return Err(bad("it must not carry userinfo"));
+    }
+    if url.query().is_some() || url.fragment().is_some() {
+        return Err(bad("it must not carry a query or a fragment"));
+    }
+    if url.path() != "/" {
+        return Err(bad("it must not carry a path"));
+    }
+    if url.port() == Some(0) {
+        return Err(bad("the port must be between 1 and 65535"));
+    }
+    // The crate accepts `.h` and `h..` as domains, and they are their own normal
+    // form, but no such host resolves. Only a single trailing dot is a name.
+    if host
+        .strip_suffix('.')
+        .unwrap_or(host)
+        .split('.')
+        .any(str::is_empty)
+    {
+        return Err(bad(
+            "the host has an empty label (a leading `.` or `..`); only one trailing `.` is allowed",
+        ));
+    }
+
+    let canonical = match url.port() {
+        Some(port) => format!("{}://{host}:{port}", url.scheme()),
+        None => format!("{}://{host}", url.scheme()),
+    };
+    if base != canonical {
+        return Err(bad(&format!(
+            "write it as {canonical:?}: an origin with no path at all (not even `.` or `%2e`), \
+             in lowercase, without the default port, leading zeros or percent-escapes"
+        )));
+    }
+    Ok(())
 }
 
 /// `unix:/path/to.sock` selects a Unix socket; anything else is taken as a
@@ -146,5 +336,216 @@ mod tests {
     #[test]
     fn unix_without_a_path_is_an_error() {
         assert!(parse_listen("unix:", None).is_err());
+    }
+
+    #[test]
+    fn media_mode_defaults_to_proxy_and_parses_both_modes() {
+        assert_eq!(parse_media_mode(None).unwrap(), MediaMode::Proxy);
+        assert_eq!(parse_media_mode(Some("proxy")).unwrap(), MediaMode::Proxy);
+        assert_eq!(
+            parse_media_mode(Some("redirect")).unwrap(),
+            MediaMode::Redirect
+        );
+        assert_eq!(
+            parse_media_mode(Some(" Redirect ")).unwrap(),
+            MediaMode::Redirect
+        );
+    }
+
+    #[test]
+    fn an_unknown_or_empty_media_mode_is_an_error_that_names_the_variable() {
+        for raw in ["redirct", "", "off"] {
+            let err = parse_media_mode(Some(raw)).unwrap_err();
+            assert!(err.contains("MEDIA_MODE"), "{raw:?}: {err}");
+        }
+    }
+
+    #[test]
+    fn an_empty_or_blank_referer_suffix_is_an_error_that_names_the_variable() {
+        for raw in ["", " ", "\t", " \n "] {
+            let err = parse_referer_suffix(raw).unwrap_err();
+            assert!(err.contains("INTERNAL_REFERER_SUFFIX"), "{raw:?}: {err}");
+            assert!(err.contains("empty"), "{raw:?}: {err}");
+        }
+        assert_eq!(
+            parse_referer_suffix(".your-tailnet.ts.net").unwrap(),
+            ".your-tailnet.ts.net"
+        );
+    }
+
+    /// A suffix of nothing but dots names no host, and `.` would match every
+    /// host written with a trailing dot.
+    #[test]
+    fn a_referer_suffix_of_only_dots_is_an_error_that_names_the_variable() {
+        for raw in [".", "..", "...", " . ", "\t..\n"] {
+            let err = parse_referer_suffix(raw).unwrap_err();
+            assert!(err.contains("INTERNAL_REFERER_SUFFIX"), "{raw:?}: {err}");
+            assert!(err.contains("dots"), "{raw:?}: {err}");
+        }
+        for raw in ["h", ".h", "h.", "h.h", ".h.h"] {
+            assert!(parse_referer_suffix(raw).is_ok(), "{raw:?}");
+        }
+    }
+
+    /// A suffix that could never be (part of) the host of a `Referer` would
+    /// match nothing and switch the internal redirect off silently.
+    #[test]
+    fn a_referer_suffix_that_can_never_match_is_an_error_that_says_why() {
+        for raw in [
+            "\u{30c6}\u{30a4}\u{30eb}.example",
+            "\u{c9}COLE.example",
+            "internal example.ts.net",
+            "a/b.example",
+            "a:b",
+            "a@b.example",
+            "h_x.example",
+        ] {
+            let err = parse_referer_suffix(raw).unwrap_err();
+            assert!(err.contains("INTERNAL_REFERER_SUFFIX"), "{raw:?}: {err}");
+            assert!(err.contains("punycode"), "{raw:?}: {err}");
+        }
+        for raw in ["a..b", "..h", "h..", ".h..", "..h.", "a...b", ".a..b."] {
+            let err = parse_referer_suffix(raw).unwrap_err();
+            assert!(err.contains("INTERNAL_REFERER_SUFFIX"), "{raw:?}: {err}");
+            assert!(err.contains("empty label"), "{raw:?}: {err}");
+        }
+    }
+
+    /// Every way an operator would really write a suffix is kept, including a
+    /// single dot at either end and punycode.
+    #[test]
+    fn the_ways_an_operator_writes_a_referer_suffix_are_kept() {
+        for raw in [
+            ".your-tailnet.ts.net",
+            "your-tailnet.ts.net",
+            ".ts.net",
+            ".xn--80ak6aa92e.example",
+            "xn--80ak6aa92e.example",
+            ".h.",
+            "h.",
+            "-h",
+            "a-b.c1",
+            "100.64.0.1",
+            " .Your-Tailnet.TS.net ",
+        ] {
+            assert!(parse_referer_suffix(raw).is_ok(), "{raw:?}");
+        }
+    }
+
+    #[test]
+    fn a_referer_suffix_is_trimmed_and_lowercased() {
+        for (raw, expected) in [
+            (" .Your-Tailnet.TS.net\n", ".your-tailnet.ts.net"),
+            ("\tINTERNAL.example.ts.net ", "internal.example.ts.net"),
+            (".already.lower.example", ".already.lower.example"),
+        ] {
+            assert_eq!(parse_referer_suffix(raw).unwrap(), expected, "{raw:?}");
+        }
+    }
+
+    #[test]
+    fn a_plain_origin_is_a_usable_internal_base_url() {
+        for base in [
+            "https://h",
+            "https://h:8443",
+            "http://100.64.0.1:3000",
+            "http://[::1]:3000",
+            "https://misskey.your-tailnet.ts.net",
+            // A trailing dot is the host's normal form.
+            "https://h.",
+            "https://a.b.",
+        ] {
+            assert!(validate_internal_base_url(base).is_ok(), "{base}");
+        }
+    }
+
+    /// Every refusal names the rule that fired. The normal-form check at the end
+    /// would refuse all of these too (with a less helpful message), so the
+    /// reason is what shows that each specific check is doing its own job.
+    #[test]
+    fn an_internal_base_url_is_refused_for_the_reason_it_fails() {
+        for (base, reason) in [
+            ("https://h ", "whitespace"),
+            ("https://h\n", "whitespace"),
+            ("https://h\\", "backslash"),
+            (
+                "https://\u{30e1}\u{30c7}\u{30a3}\u{30a2}.example",
+                "non-ASCII",
+            ),
+            ("ftp://h", "scheme"),
+            ("https://user@h", "userinfo"),
+            ("https://user:pw@h", "userinfo"),
+            ("https://:pw@h", "userinfo"),
+            ("https://h?x", "query"),
+            ("https://h#x", "fragment"),
+            ("https://h/p", "path"),
+            ("https://h:0", "port"),
+            ("https://.h", "empty label"),
+            ("https://h..", "empty label"),
+            ("https://h...", "empty label"),
+            ("https://a..b", "empty label"),
+            ("https://.a.b.", "empty label"),
+            ("https://H", "write it as \"https://h\""),
+            ("https://h:443", "write it as \"https://h\""),
+            ("https://h/..", "write it as \"https://h\""),
+        ] {
+            let err = validate_internal_base_url(base).unwrap_err();
+            assert!(err.contains(reason), "{base:?}: {err}");
+        }
+    }
+
+    /// The `url` crate reads each of these as a bare origin (a path that
+    /// normalises to `/`, a spelling it rewrites), but the string that would
+    /// go into a `Location` is the one written.
+    #[test]
+    fn an_internal_base_url_is_judged_as_written_not_as_normalised() {
+        for base in [
+            "https://h/..",
+            "https://h/.",
+            "https://h/%2e",
+            "https://h/%2E%2e",
+            "https://h/x/..",
+            "https://h:000443",
+            "https://h:0",
+            "https://h:00",
+            "https://h:443",
+            "http://h:80",
+            "https://%68",
+            "https://H",
+            "HTTP://h",
+            "https://0x7f.1",
+            "https://h/",
+        ] {
+            let err = validate_internal_base_url(base).unwrap_err();
+            assert!(err.contains("INTERNAL_BASE_URL"), "{base:?}: {err}");
+        }
+    }
+
+    #[test]
+    fn an_internal_base_url_with_anything_beyond_an_origin_is_refused() {
+        for base in [
+            "h",
+            "//h",
+            "ftp://h",
+            "https://user@h",
+            "https://user:pw@h",
+            "https://h?x",
+            "https://h#x",
+            "https://h/p",
+            "https:///",
+            "https://h ",
+            "https://h\n",
+            // Valid to the `url` crate (it would punycode the host), but the
+            // redirect target must be written exactly as it will be sent.
+            "https://\u{30e1}\u{30c7}\u{30a3}\u{30a2}.example",
+            // `\` ends the authority for the `url` crate, so `https://h\` reads
+            // as a valid origin, but no path can be appended to it that
+            // survives `internal_location`'s parse-back.
+            "https://h\\",
+            "https://h:8443\\",
+        ] {
+            let err = validate_internal_base_url(base).unwrap_err();
+            assert!(err.contains("INTERNAL_BASE_URL"), "{base:?}: {err}");
+        }
     }
 }

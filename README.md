@@ -59,7 +59,16 @@ citations into Misskey's own source — is in [`docs/routes.md`](docs/routes.md)
     instead of proxying bytes when the request's `Referer` looks internal
     — a bandwidth optimization, not a security boundary. It is scoped to
     those media routes only; a spoofed internal `Referer` on any other
-    path still gets a plain 404.
+    path still gets a plain 404. With `MEDIA_MODE=redirect` these routes
+    stop being a relay at all: nothing on them is ever forwarded to
+    Misskey. An internal `Referer` is redirected to the internal
+    deployment as before, `/proxy/*?url=` is redirected to the original
+    URL when it falls under an allowed prefix (`MEDIA_ALLOWED_PREFIXES`)
+    and is a 404 otherwise, and `/files/*` without an internal `Referer`
+    is a 404. Every 302 and 404 that this layer answers itself carries
+    `Cache-Control: no-store`, because the answer for one URL depends on the
+    `Referer` and a shared cache in front must not keep it. See
+    [`docs/routes.md`](docs/routes.md) for the rules.
 - **No TLS in this process.** Put a TLS terminator (Caddy, Cloudflare
   Tunnel, ...) in front of it; this binary only ever speaks plain HTTP.
   It can accept that terminator's requests over a Unix socket rather than
@@ -80,8 +89,10 @@ All via environment variables (see `src/config.rs`):
 | `LISTEN_ADDR` | `0.0.0.0:8080`, `unix:/run/egress/egress.sock` | Where the proxy itself listens (plain HTTP). A `unix:` prefix listens on a Unix socket instead of TCP |
 | `LISTEN_SOCKET_MODE` | `0666` (default) | Mode applied to that socket after `bind`; Unix form only |
 | `MISSKEY_SOCKET` | `/run/misskey/misskey.sock` | Misskey's UDS |
-| `INTERNAL_BASE_URL` | `https://misskey.your-tailnet.ts.net` | Redirect target for internal media callers |
-| `INTERNAL_REFERER_SUFFIX` | `.your-tailnet.ts.net` | Hostname suffix that marks a `Referer` as internal |
+| `INTERNAL_BASE_URL` | `https://misskey.your-tailnet.ts.net` | Redirect target for internal media callers. With `MEDIA_MODE=redirect` it is checked at startup: an `http(s)` origin only, no userinfo, query, fragment or path, and plain ASCII (write an IDN host as punycode). It is judged as written, and it must be in its normal form: `https://h/..`, `https://h:443`, `https://H`, `https://h:000443` and a host with an empty label (`https://.h`, `https://h..`) are refused |
+| `INTERNAL_REFERER_SUFFIX` | `.your-tailnet.ts.net` | Hostname suffix that marks a `Referer` as internal. Required in both modes, and never empty or only dots: an empty suffix would make every `Referer` internal, and `.` every host written with a trailing dot, so the proxy refuses to start. Trimmed and lowercased when read, then only ASCII letters, digits, `-` and `.` are accepted (write an IDN in punycode) with no empty label (one `.` at each end is fine). With a leading dot it matches any host that ends with it; without one it matches that host and its subdomains, not `notyour-tailnet.ts.net` |
+| `MEDIA_MODE` | `proxy` (default), `redirect` | `proxy` relays `/files/*` and `/proxy/*` to Misskey (an internal `Referer` still gets the redirect). `redirect` never forwards them: see [Media mode](#media-mode). An unknown or empty value stops the proxy at startup |
+| `MEDIA_ALLOWED_PREFIXES` | `https://misskey.example.com/files/,https://r2.example.net/` | `redirect` mode only (ignored in `proxy` mode, with a `warn` log if `RUST_LOG` lets it through): comma-separated `https://host[:port][/path-prefix]` entries that a `/proxy/*?url=` request may be redirected to. Empty means every such request is a 404. An invalid entry stops the proxy at startup |
 | `STATIC_DIR` | `/usr/local/share/misskey-egress-proxy` (default) | Directory containing optional `index.html` and `misskey.svg` overrides for the public landing page |
 
 The image includes a default page at `/`. To replace it without rebuilding,
@@ -93,6 +104,83 @@ The bundled wordmark is vendored from
 in the official Misskey repository.
 
 See `docker-compose.yml` for a production reference layout.
+
+### Media mode
+
+`MEDIA_MODE=redirect` is for a deployment where something in front of this
+proxy answers `/files/*`, and media that is hosted elsewhere (object storage,
+a CDN) should be handed to the client instead of relayed. In that mode:
+
+| Request | Result |
+|---|---|
+| Any `/files/*` or `/proxy/*` with an internal `Referer` | `302` to `INTERNAL_BASE_URL` + its own path and query (same as `proxy` mode) |
+| `/proxy/*?url=<URL>` where `<URL>` is under an allowed prefix | `302` to that URL, normalised |
+| `/proxy/*?url=<URL>` anywhere else, or malformed | `404` |
+| `/files/*` without an internal `Referer` | `404` |
+
+Example, with placeholder hosts:
+
+```
+MEDIA_MODE=redirect
+INTERNAL_BASE_URL=https://misskey.your-tailnet.ts.net
+INTERNAL_REFERER_SUFFIX=.your-tailnet.ts.net
+MEDIA_ALLOWED_PREFIXES=https://misskey.example.com/files/,https://r2.example.net/
+```
+
+**Read these before turning it on:**
+
+- **`/proxy` no longer processes anything.** It redirects to the original
+  file, so Misskey's resizing, webp conversion and still-image variants
+  (`static`, `avatar`, `emoji`, `preview`, `badge`) do not happen.
+- **Objects behind `MEDIA_ALLOWED_PREFIXES` must be public-read, and signed
+  URLs are not supported.** The `Location` is the parsed URL re-serialised,
+  which can change a signature in the query, and redirecting to a URL that
+  carries an expiring secret would put that secret in the response anyway.
+- **On a shared S3 endpoint, name the bucket in the entry**
+  (`https://s3.example.com/my-bucket/`). A host-only entry also allows every
+  other tenant's bucket on that endpoint. Prefixes match on path-segment
+  boundaries, so `/my-bucket/` does not allow `/my-bucket-evil/`. For your
+  own domain, always include the `/files/` path.
+- **A caller without an internal `Referer` cannot fetch `/files/*` from this
+  proxy at all** (it is a `404`). That is meant to be answered by whatever
+  sits in front; if that routing is ever wrong, `/files/*` fails loudly
+  rather than reaching Misskey.
+- **Only `https://` entries are accepted, and only exact host names**: no IP
+  addresses, no wildcards, no trailing dot, and a port only in 1–65535 (`:0` is
+  refused). A non-ASCII host is normalised to punycode and allowed as that, so
+  write it in punycode: a look-alike character typed by mistake would allow a
+  different host than the one intended.
+- Requests it cannot vouch for are refused rather than repaired: the `url`
+  must be a single, plain `https://host[:port]/path` value. The validation
+  rules and why each exists are in [`docs/routes.md`](docs/routes.md).
+
+One behaviour change applies to `proxy` mode as well: an internal-`Referer`
+redirect is now only sent for a clean path, so a `/files/../x` with an
+internal `Referer` is a `404` rather than a `302`. Relaying to Misskey is
+untouched.
+
+### Companion project: misskey-files-proxy
+
+In the author's setup two projects share the media traffic. `/files/*` is
+routed at the edge (cloudflared, `^/files`) to
+[nananek/misskey-files-proxy](https://github.com/nananek/misskey-files-proxy)
+(mfp), which answers `302` to Cloudflare R2 for files that have been migrated
+and relays the rest to Misskey. Everything else, `/proxy/*` included, reaches
+this proxy, which in `redirect` mode `302`s to the allowed original URL
+(object storage, or the own domain's `/files/`, which the edge then hands to
+mfp).
+
+**The two are tightly coupled.** (1) The edge routing (`^/files` to mfp) is
+assumed; without it this proxy's `/files/*` is a `404`. (2) The own-domain
+`/files/` entry in `MEDIA_ALLOWED_PREFIXES` assumes mfp is what answers it.
+(3) Neither calls the other at run time (mfp's `upstream` is Misskey itself,
+not this proxy), so what mfp relays to Misskey for a `/files/:key` it does not
+hold is out of this mode's control. (4) mfp is written for its author's
+Misskey; it is not a general component.
+
+This describes the author's configuration and is not something the proxy
+checks: nothing in the code depends on it, and the behaviour above holds for
+whatever values you put in `MEDIA_ALLOWED_PREFIXES`.
 
 ## Deployment notes
 
@@ -110,7 +198,10 @@ See `docker-compose.yml` for a production reference layout.
   through this proxy — but replacing the header is the safe setting.
 - **Keep `allowedPrivateNetworks` unset in Misskey.** `/proxy/*` is
   public by design (federation needs remote media), and Misskey's own
-  SSRF guard is what keeps it from fetching private addresses.
+  SSRF guard is what keeps it from fetching private addresses. With
+  `MEDIA_MODE=redirect` it is no longer a public media proxy: it never
+  reaches Misskey and never fetches anything itself, it only redirects to
+  the prefixes you allow.
 
 ## Image
 

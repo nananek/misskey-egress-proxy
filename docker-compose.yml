@@ -28,6 +28,15 @@ services:
       # suffix that identifies a caller as internal. See docs/routes.md.
       INTERNAL_BASE_URL: "https://misskey.your-tailnet.ts.net"
       INTERNAL_REFERER_SUFFIX: ".your-tailnet.ts.net"
+      # Optional. For a deployment where something in front of this proxy
+      # answers `/files`, and remote media should be redirected to its
+      # original URL instead of relayed: `/files/*` and `/proxy/*` are then
+      # never forwarded to Misskey. The allowed prefixes must be public-read;
+      # signed URLs are not supported. On a shared S3 endpoint include the
+      # bucket, and give your own domain as `/files/` (not the bare host).
+      # The hosts below are placeholders. See README.md ("Media mode").
+      # MEDIA_MODE: "redirect"
+      # MEDIA_ALLOWED_PREFIXES: "https://misskey.example.com/files/,https://r2.example.net/"
     # Both legs are sockets, so the proxy needs no IP networking at all.
     network_mode: "none"
     volumes:
