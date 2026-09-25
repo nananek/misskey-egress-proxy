@@ -357,6 +357,36 @@ mod tests {
         }
     }
 
+    /// Every refusal names the rule that fired. The normal-form check at the end
+    /// would refuse all of these too (with a less helpful message), so the
+    /// reason is what shows that each specific check is doing its own job.
+    #[test]
+    fn an_internal_base_url_is_refused_for_the_reason_it_fails() {
+        for (base, reason) in [
+            ("https://h ", "whitespace"),
+            ("https://h\n", "whitespace"),
+            ("https://h\\", "backslash"),
+            (
+                "https://\u{30e1}\u{30c7}\u{30a3}\u{30a2}.example",
+                "non-ASCII",
+            ),
+            ("ftp://h", "scheme"),
+            ("https://user@h", "userinfo"),
+            ("https://user:pw@h", "userinfo"),
+            ("https://:pw@h", "userinfo"),
+            ("https://h?x", "query"),
+            ("https://h#x", "fragment"),
+            ("https://h/p", "path"),
+            ("https://h:0", "port"),
+            ("https://H", "write it as \"https://h\""),
+            ("https://h:443", "write it as \"https://h\""),
+            ("https://h/..", "write it as \"https://h\""),
+        ] {
+            let err = validate_internal_base_url(base).unwrap_err();
+            assert!(err.contains(reason), "{base:?}: {err}");
+        }
+    }
+
     /// The `url` crate reads each of these as a bare origin (a path that
     /// normalises to `/`, a spelling it rewrites), but the string that would
     /// go into a `Location` is the one written.
