@@ -14,7 +14,8 @@ use std::os::unix::fs::{FileTypeExt, PermissionsExt};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -33,15 +34,25 @@ fn unique_path(prefix: &str) -> PathBuf {
 
 /// Minimal Misskey stand-in: answers every request with 200 and a fixed body.
 fn spawn_mock_misskey(socket: &Path) {
+    spawn_counting_mock_misskey(socket);
+}
+
+/// Same stand-in, but counts the connections it accepts, so a test can assert
+/// that a request never reached the upstream at all.
+fn spawn_counting_mock_misskey(socket: &Path) -> Arc<AtomicUsize> {
     let listener = UnixListener::bind(socket).expect("bind mock Misskey socket");
+    let connections = Arc::new(AtomicUsize::new(0));
+    let counter = Arc::clone(&connections);
     thread::spawn(move || {
         for stream in listener.incoming() {
             let Ok(mut stream) = stream else { break };
+            counter.fetch_add(1, Ordering::SeqCst);
             let mut buf = [0u8; 4096];
             let _ = stream.read(&mut buf);
             let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok");
         }
     });
+    connections
 }
 
 fn spawn_proxy(listen: &Path, misskey: &Path) -> Child {
@@ -79,6 +90,21 @@ fn http_get(socket: &Path, path: &str) -> String {
         .expect("write request");
     let mut response = String::new();
     stream.read_to_string(&mut response).expect("read response");
+    response
+}
+
+/// Writes `request` exactly as given and returns whatever comes back until
+/// the proxy closes the connection. A read error after a rejected request
+/// (the proxy closing with unread bytes) is not a failure of the exchange, so
+/// it just ends the read.
+fn http_raw(socket: &Path, request: &[u8]) -> Vec<u8> {
+    let mut stream = UnixStream::connect(socket).expect("connect to egress socket");
+    stream
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
+    stream.write_all(request).expect("write request");
+    let mut response = Vec::new();
+    let _ = stream.read_to_end(&mut response);
     response
 }
 
@@ -228,6 +254,73 @@ fn rejections_wait_for_the_request_body_before_answering() {
             "{method} {path}: expected {expected}, got {response}"
         );
     }
+
+    cleanup(&mut proxy, &listen, &misskey);
+}
+
+/// W1 (dependency_behavior DB-H*): a raw control character or space in the
+/// request-target never gets past hyper's request-line parser, so the proxy
+/// answers 400 and the upstream is never dialled. This is what lets the
+/// path validators assume such bytes cannot appear in a `path_and_query`.
+#[test]
+fn a_control_character_or_space_in_the_target_is_a_400_and_never_reaches_misskey() {
+    let misskey = unique_path("misskey");
+    let listen = unique_path("egress");
+    let upstream_connections = spawn_counting_mock_misskey(&misskey);
+    let mut proxy = spawn_proxy(&listen, &misskey);
+    wait_until_connectable(&listen);
+
+    for (name, byte) in [
+        ("TAB", 0x09u8),
+        ("LF", 0x0a),
+        ("NUL", 0x00),
+        ("space", 0x20),
+        ("DEL", 0x7f),
+    ] {
+        let mut request = b"GET /files/a".to_vec();
+        request.push(byte);
+        request.extend_from_slice(b"b HTTP/1.1\r\nHost: test\r\nConnection: close\r\n\r\n");
+
+        let response = http_raw(&listen, &request);
+        assert!(
+            response.starts_with(b"HTTP/1.1 400"),
+            "raw {name} in the target: expected 400, got {:?}",
+            String::from_utf8_lossy(&response)
+        );
+    }
+    assert_eq!(
+        upstream_connections.load(Ordering::SeqCst),
+        0,
+        "a malformed target must not reach the upstream"
+    );
+
+    cleanup(&mut proxy, &listen, &misskey);
+}
+
+/// W2: a raw `\xff` (not valid UTF-8) in the request-target is refused with a
+/// 4xx and the upstream is never dialled.
+#[test]
+fn an_invalid_utf8_byte_in_the_target_is_a_4xx_and_never_reaches_misskey() {
+    let misskey = unique_path("misskey");
+    let listen = unique_path("egress");
+    let upstream_connections = spawn_counting_mock_misskey(&misskey);
+    let mut proxy = spawn_proxy(&listen, &misskey);
+    wait_until_connectable(&listen);
+
+    let response = http_raw(
+        &listen,
+        b"GET /files/a\xffb HTTP/1.1\r\nHost: test\r\nConnection: close\r\n\r\n",
+    );
+    let text = String::from_utf8_lossy(&response);
+    assert!(
+        text.starts_with("HTTP/1.1 4"),
+        "raw 0xff in the target: expected a 4xx, got {text:?}"
+    );
+    assert_eq!(
+        upstream_connections.load(Ordering::SeqCst),
+        0,
+        "a malformed target must not reach the upstream"
+    );
 
     cleanup(&mut proxy, &listen, &misskey);
 }
