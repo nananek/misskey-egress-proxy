@@ -17,13 +17,11 @@
 // deployment's values belong in code or tests.
 
 /// The allowlist every row is judged against.
-#[allow(dead_code)]
 pub const T_SET: &str = "https://s3.example.com/bucket/,https://r2.example.net/,\
                          https://misskey.example.com/files/,https://s3.example.com:9000/other/";
 
 /// What T_SET permits, spelled out for the invariant check: `(host, port,
 /// path prefix)`.
-#[allow(dead_code)]
 pub const T_SET_PERMITS: &[(&str, u16, &str)] = &[
     ("s3.example.com", 443, "/bucket/"),
     ("r2.example.net", 443, "/"),
@@ -32,7 +30,6 @@ pub const T_SET_PERMITS: &[(&str, u16, &str)] = &[
 ];
 
 /// `(decoded value of the url parameter, expectation)`.
-#[allow(dead_code)]
 pub const VALUE_CASES: &[(&str, &str)] = &[
     // Ok1: the ordinary shapes must not be over-refused.
     (
@@ -228,7 +225,6 @@ pub const VALUE_CASES: &[(&str, &str)] = &[
 
 /// `(raw path?query, expectation)`: the rows that are about the query
 /// string's own shape and so cannot be written as a single decoded value.
-#[allow(dead_code)]
 pub const RAW_CASES: &[(&str, &str)] = &[
     // K1: no `url`, an empty `url`.
     ("/proxy/image.webp", "U0Param"),
@@ -300,7 +296,6 @@ pub const RAW_CASES: &[(&str, &str)] = &[
 /// A `/proxy/*` request-target that carries `value` as its `url` parameter.
 /// Encoded the way a real client would, so a value holding a control
 /// character or a space still makes a well-formed target.
-#[allow(dead_code)]
 pub fn proxy_target(value: &str) -> String {
     format!(
         "/proxy/image.webp?url={}",
@@ -313,7 +308,6 @@ pub fn proxy_target(value: &str) -> String {
 /// `@` (userinfo) and the `:port`. Deliberately independent of the `url`
 /// crate, so that agreeing with `Url::host_str()` is evidence the two
 /// readings of a `Location` do not diverge.
-#[allow(dead_code)]
 pub fn rfc3986_host(location: &str) -> String {
     let after_scheme = location.split_once("://").expect("a scheme").1;
     let end = after_scheme
@@ -328,7 +322,6 @@ pub fn rfc3986_host(location: &str) -> String {
 /// URL: it is stable under re-parsing, `https`, has no userinfo or fragment,
 /// is ASCII without `\`, names a host and path the allowlist permits, and
 /// both readings of its host agree.
-#[allow(dead_code)]
 pub fn assert_location_invariants(location: &str) {
     let parsed = url::Url::parse(location).unwrap_or_else(|e| panic!("{location}: {e}"));
     assert_eq!(parsed.as_str(), location, "not stable under re-parsing");
