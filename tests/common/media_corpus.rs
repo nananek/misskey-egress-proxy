@@ -271,6 +271,16 @@ pub const RAW_CASES: &[(&str, &str)] = &[
     ),
     // K6: an outer `+` decodes to a space.
     ("/proxy/i?url=https://s3.example.com/bucket/a+b", "U2Bytes"),
+    // Raw bytes an HTTP client may legally put in a query: `\` (Au5/Sch3
+    // written unencoded), an escape that is not valid, one that decodes to
+    // invalid UTF-8.
+    ("/proxy/i?url=https:\\\\s3.example.com\\bucket\\a.png", "U3Scheme"),
+    (
+        "/proxy/i?url=https://s3.example.com\\@evil.example/bucket/a.png",
+        "U4Chars",
+    ),
+    ("/proxy/i?url=https://s3.example.com/bucket/a%zz", "U6Path"),
+    ("/proxy/i?url=https://s3.example.com/bucket/a%ff", "U2Bytes"),
     // Other parameters are ignored wherever they sit.
     (
         "/proxy/i?static=1&url=https%3A%2F%2Fs3.example.com%2Fbucket%2Fa.png",
