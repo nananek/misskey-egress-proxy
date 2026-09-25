@@ -769,6 +769,12 @@ mod tests {
             "https://s3.example.com/a//b/",
             "https://s3.example.com/a\\b/",
             "https://s3.example.com/a b/",
+            // The `url` crate reads all of these as a plain, valid entry (`\`
+            // ends the authority, TAB / LF inside the host are dropped), so
+            // only the check on the raw text refuses them.
+            "https://s3.example.com\\",
+            "https://s3.exa\tmple.com/",
+            "https://s3.exa\nmple.com/",
             "https://%73%33.example.com/",
             "https://s3.example.com/\u{3042}/",
         ] {
