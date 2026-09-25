@@ -286,7 +286,7 @@ pub const RAW_CASES: &[(&str, &str)] = &[
         "/proxy/avatar.webp?url=https%3A%2F%2Fs3.example.com%2Fbucket%2Fa.png&avatar=1&static=1",
         "ok:https://s3.example.com/bucket/a.png",
     ),
-    // Our own /files/ (D12): the second hop belongs to the edge.
+    // Our own /files/: the second hop belongs to the edge.
     (
         "/proxy/avatar.webp?url=https%3A%2F%2Fmisskey.example.com%2Ffiles%2Fk1&avatar=1",
         "ok:https://misskey.example.com/files/k1",

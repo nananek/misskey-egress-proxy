@@ -502,7 +502,7 @@ fn corpus_targets() -> Vec<(String, &'static str)> {
 
 /// R1: an internal Referer is redirected to the internal host in redirect
 /// mode too, whatever the target would otherwise have been, so the operator's
-/// own UI keeps getting its remote media (D5).
+/// own UI keeps getting its remote media.
 #[tokio::test]
 async fn redirect_mode_still_sends_an_internal_referer_to_the_internal_host() {
     let app = redirect_app(allowed_set());
@@ -524,7 +524,7 @@ async fn redirect_mode_still_sends_an_internal_referer_to_the_internal_host() {
     }
 }
 
-/// R2 (D13): without an internal Referer `/files/*` is a 404, not a 302 to
+/// R2: without an internal Referer `/files/*` is a 404, not a 302 to
 /// the internal host and not a forward.
 #[tokio::test]
 async fn redirect_mode_answers_files_without_an_internal_referer_with_404() {
@@ -573,7 +573,7 @@ async fn redirect_mode_sends_proxy_requests_to_the_original_url() {
     }
 }
 
-/// R4 (D12): an original URL on our own domain's `/files/` is redirected to.
+/// R4: an original URL on our own domain's `/files/` is redirected to.
 /// Asking *this* proxy for that `/files/` URL is a 404, which is right: in
 /// the deployment this mode is written for, the edge answers `/files` before
 /// it can reach the proxy, so the second hop never lands here.
@@ -599,7 +599,7 @@ async fn redirect_mode_hands_our_own_files_url_to_the_edge_rather_than_looping()
 
 /// R5: the internal Referer wins over the allowlist, and an external Referer
 /// (suffix mismatch) changes nothing; a target that fails the internal check
-/// is a 404 (D7).
+/// is a 404.
 #[tokio::test]
 async fn redirect_mode_gives_the_internal_referer_priority_over_the_allowlist() {
     let app = redirect_app(allowed_set());
@@ -864,7 +864,7 @@ async fn an_internal_redirect_is_only_sent_for_a_clean_target() {
     }
 }
 
-/// R12 (D7's boundary): the default mode still relays media verbatim,
+/// R12: the default mode still relays media verbatim,
 /// whatever it looks like, and an allowlist has no effect there. The one
 /// difference is a malformed target with an internal Referer.
 #[tokio::test]
