@@ -88,10 +88,18 @@ pub enum Reject {
 /// object, however many layers of decoding sit between here and the file.
 ///
 /// Every segment must be non-empty; must not decode, at any of up to 8
-/// layers, to `.` / `..` or to something holding `/`, `\`, a control byte or
-/// DEL; and must not carry a malformed `%`. UTF-8 percent-escapes
+/// layers, to `.` / `..` or to something holding `/`, `\`, `;`, a control
+/// byte or DEL; and must not carry a malformed `%`. A layer that decodes to
+/// bytes which are not valid UTF-8 (an overlong or otherwise non-canonical
+/// encoding, such as `%C0%AE` for `.`) is refused too: this side and whatever
+/// follows the `Location` could read it differently. UTF-8 percent-escapes
 /// (`%E3%81%82`) are fine. Past the first layer a stray `%` just ends the
 /// decoding, so a file literally called `%zz` (`%25zz`) is not refused.
+///
+/// `;` is refused because RFC 3986 allows path parameters after it while
+/// several other readers treat it as an ordinary character or strip it; a
+/// segment that is `..;` to one reader and `..` to another is exactly the
+/// parser differential this function exists to prevent.
 ///
 /// The path is judged as it was written, not as the `url` crate would
 /// normalise it, because the normalisation is exactly what would hide a
@@ -114,8 +122,14 @@ fn segment_is_safe(segment: &str) -> bool {
             || current == b".."
             || current
                 .iter()
-                .any(|&b| b == b'/' || b == b'\\' || b < 0x20 || b == 0x7f)
+                .any(|&b| b == b'/' || b == b'\\' || b == b';' || b < 0x20 || b == 0x7f)
         {
+            return false;
+        }
+        // The raw segment is valid UTF-8 by construction; a decode round can
+        // produce bytes that are not (`%C0%AE` is an overlong `.`). Refuse
+        // rather than guess how a downstream reader would map them back.
+        if std::str::from_utf8(&current).is_err() {
             return false;
         }
 
@@ -555,6 +569,38 @@ mod tests {
     }
 
     #[test]
+    fn path_is_safe_refuses_path_parameters() {
+        // `;` starts a path parameter for RFC 3986 readers and is an ordinary
+        // byte (or stripped) for others: `..;` must not pass on the way to a
+        // reader that would see `..`.
+        for path in [
+            "/a;b",
+            "/..;",
+            "/a/..;/b",
+            "/a%3Bb",
+            "/a;%2e%2e",
+            "/a%2e%2e%3bb",
+        ] {
+            assert!(!path_is_safe(path), "{path:?} should be refused");
+        }
+    }
+
+    #[test]
+    fn path_is_safe_refuses_non_utf8_after_decoding() {
+        // Overlong encodings: invalid UTF-8 once decoded, but some readers
+        // normalise them to `.` or `/`.
+        for path in [
+            "/%C0%AE%C0%AE",
+            "/%c0%ae%c0%ae",
+            "/a/%C0%AFb",
+            "/%E0%80%AE%E0%80%AE",
+            "/a%c0%80b",
+        ] {
+            assert!(!path_is_safe(path), "{path:?} should be refused");
+        }
+    }
+
+    #[test]
     fn path_is_safe_sees_through_repeated_encoding() {
         for path in [
             "/%252e%252e",
@@ -649,6 +695,9 @@ mod tests {
             ("/files/../x", Reject::F4Path),
             ("/files/./x", Reject::F4Path),
             ("/files/%2e%2e/x", Reject::F4Path),
+            ("/files/..%3b/x", Reject::F4Path),
+            ("/files/%C0%AE%C0%AE/x", Reject::F4Path),
+            ("/files/a;b", Reject::F4Path),
             ("/files/a%2fb", Reject::F4Path),
             ("/files/a%5cb", Reject::F4Path),
             ("/files/a%zz", Reject::F4Path),
