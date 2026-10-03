@@ -102,6 +102,29 @@ federation には不要と判断し allowlist から除外した。
 `Accept: */*` や `Accept` 無しで取りに来る連合実装を巻き込んで落とすため、
 上書きに改めた。どうせ書き換えるヘッダで相手を選別する意味は無い。
 
+## ブラウザのページ遷移は `/` へ 302
+
+人間がブラウザで開くのは `/` の案内ページだけにする。AP 系と discovery 系の
+ルート（上表のうち `/files/*`・`/proxy/*`・`/identicon/:x` を除く全部）に
+`src/navigation.rs` の `redirect_navigation` を `route_layer` で掛け、
+`Sec-Fetch-Dest` が `document`・`iframe`・`frame` のリクエストは Misskey に
+転送せず `Location: /` の 302 で返す（body は drain してから）。連合先で
+「元のページを開く」を押した人や URL を貼った人が、生の AP JSON ではなく
+案内ページに着地する。
+
+- 判定に `Sec-Fetch-Dest` を使うのは、ブラウザしか付けないため。連合サーバー・
+  クローラー・リンクプレビュー取得は付けないので従来どおり転送される。
+  `Accept: text/html` は、リンクプレビュー取得や一部の連合実装も送るので使わない。
+- media は対象外。`<img>` 読み込み（`Sec-Fetch-Dest: image`）は元々対象外だが、
+  画像を新しいタブで開くのも `document` なので、ルートごと外してある。
+- ヘッダを付けない古いブラウザや curl は従来どおり AP JSON を受け取る。
+  見せ方の問題でありセキュリティ境界ではないので、それで構わない。
+- 302 には `Cache-Control: no-store` を付ける。結果が `Sec-Fetch-Dest` で変わる
+  のに前段の共有キャッシュはそれをキーにしないので、保存された 302 が連合サーバーに
+  返ると、その URL の連合が壊れるため。転送した応答には何も足さない。
+- allowlist 外のパスやフィード経路は従来どおり 404（フォールバックと
+  `reject_feed_paths` が先に効く）。
+
 ## `/@:user.{rss,atom,json}`（クライアント専用フィード）の拒否
 
 `ClientServerService.ts` は `/@:user.atom`, `/@:user.rss`, `/@:user.json`

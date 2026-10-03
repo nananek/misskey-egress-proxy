@@ -12,6 +12,7 @@ use crate::config::Config;
 use crate::feed_routes::reject_feed_paths;
 use crate::home;
 use crate::media_redirect::redirect_media;
+use crate::navigation::redirect_navigation;
 use crate::proxy::{ProxyState, forward};
 use crate::reject;
 
@@ -70,14 +71,24 @@ pub fn build(proxy_state: ProxyState, config: Arc<Config>) -> Router {
         .route("/emojis/{emoji}", get(forward))
         .route("/likes/{like}", get(forward))
         .route("/follows/{a}", get(forward))
-        .route("/follows/{a}/{b}", get(forward))
-        // avatarless-user actor icon fallback (see docs/routes.md)
-        .route("/identicon/{x}", get(forward));
+        .route("/follows/{a}/{b}", get(forward));
+
+    // A browser opening any of the AP routes above as a page is sent to the
+    // landing page instead of being shown AP JSON; every other caller is
+    // forwarded as before. `route_layer` so the fallback is not wrapped.
+    let ap = Router::new()
+        .merge(plain)
+        .merge(gated)
+        .route_layer(middleware::from_fn(redirect_navigation));
+
+    // Avatarless-user actor icon fallback (see docs/routes.md). An image,
+    // like the media routes, so a browser opening it is not redirected.
+    let identicon = Router::new().route("/identicon/{x}", get(forward));
 
     Router::new()
         .merge(home)
-        .merge(plain)
-        .merge(gated)
+        .merge(ap)
+        .merge(identicon)
         .merge(media)
         // Order matters here:
         //
