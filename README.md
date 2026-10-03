@@ -44,17 +44,25 @@ citations into Misskey's own source — is in [`docs/routes.md`](docs/routes.md)
   headers, raw body — this matters for `/inbox`'s HTTP Signature `Digest`)
   or returns 404. The only local public content is the informational page at
   `/` and its Misskey wordmark asset.
-- **Two narrow exceptions**, both required for correctness, not policy:
+- **A few narrow exceptions**:
   - Three paths (`/notes/:note`, `/users/:user`, `/@:acct`) serve either
     an ActivityPub JSON object or a full HTML page from Misskey, chosen by
     the `Accept` header. This proxy rewrites that header to
     `application/activity+json` on those three paths, so the HTML variant
-    is never reachable from the public internet and every caller — a
-    federated server, a crawler, a person pasting the URL — gets AP JSON.
+    is never reachable from the public internet and every non-browser
+    caller — a federated server, a crawler, a link-preview fetcher — gets
+    AP JSON.
     Misskey's client-only feed twins of the acct path (`/@user.rss`,
     `/@user.atom`, `/@user.json`, including percent-encoded spellings) are
     rejected outright: find-my-way routes them to the feeds before the
     ActivityPub route, regardless of `Accept`.
+  - A browser that opens any ActivityPub or discovery route as a page
+    (`Sec-Fetch-Dest: document`, `iframe` or `frame`) is sent to `/` with a
+    `302` instead of being shown raw AP JSON: people only ever land on the
+    landing page. Nothing but a browser sends that header, so federation is
+    untouched; media (`/files/*`, `/proxy/*`, `/identicon/*`) is exempt,
+    since browsers load it all the time. This is about what a person sees,
+    not a security boundary.
   - `/files/*` and `/proxy/*` (media) redirect to the internal deployment
     instead of proxying bytes when the request's `Referer` looks internal
     — a bandwidth optimization, not a security boundary. It is scoped to

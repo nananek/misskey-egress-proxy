@@ -7,6 +7,7 @@ pub mod feed_routes;
 pub mod home;
 pub mod media_redirect;
 pub mod media_target;
+pub mod navigation;
 pub mod proxy;
 pub mod reject;
 pub mod routes;
