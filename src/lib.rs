@@ -4,6 +4,7 @@
 pub mod accept_gate;
 pub mod config;
 pub mod feed_routes;
+pub mod headers;
 pub mod home;
 pub mod media_redirect;
 pub mod media_target;

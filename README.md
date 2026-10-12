@@ -40,10 +40,11 @@ citations into Misskey's own source — is in [`docs/routes.md`](docs/routes.md)
 
 - **Pure allowlist, no business logic.** The proxy does not parse, join,
   reshape, or cache anything Misskey returns. It matches a request against
-  a static route table and either forwards it byte-for-byte (method,
-  headers, raw body — this matters for `/inbox`'s HTTP Signature `Digest`)
-  or returns 404. The only local public content is the informational page at
-  `/` and its Misskey wordmark asset.
+  a static route table and either forwards it — same method, same raw body
+  (this matters for `/inbox`'s HTTP Signature `Digest`), and the caller's
+  headers except the connection-specific and caller-asserted ones removed in
+  [`src/headers.rs`](src/headers.rs) — or returns 404. The only local public
+  content is the informational page at `/` and its Misskey wordmark asset.
 - **Two narrow exceptions**, both required for correctness, not policy:
   - Three paths (`/notes/:note`, `/users/:user`, `/@:acct`) serve either
     an ActivityPub JSON object or a full HTML page from Misskey, chosen by
@@ -190,12 +191,15 @@ whatever values you put in `MEDIA_ALLOWED_PREFIXES`.
   the proxy is the rejection drain: a rejected request reads at most
   1 MiB of its body, for at most 10s, before the 404/405 goes out
   (`src/reject.rs`).
-- **Replace, don't append, `X-Forwarded-For`** in the terminator. The
-  proxy forwards client headers verbatim, and Misskey's default
-  `trustProxy` derives `request.ip` from `X-Forwarded-For`, so an
-  appending terminator lets a caller pick the IP Misskey records. Today
-  only `/api/*` and sign-in rate limits consume it — none reachable
-  through this proxy — but replacing the header is the safe setting.
+- **Forwarding headers are stripped, not trusted.** The proxy removes
+  `Forwarded`, `X-Forwarded-For`, `X-Forwarded-Host`, `X-Forwarded-Proto`,
+  `X-Real-IP` and the connection-specific headers before relaying, so a
+  caller cannot pick the `request.ip` or protocol Misskey's `trustProxy`
+  would read, even behind a terminator that appends rather than replaces.
+  The `/api/*` and sign-in rate limits that consume `request.ip` are
+  unreachable through this proxy; anything that reaches Misskey outside it
+  (the internal Caddy leg) still wants the terminator's own
+  replace-don't-append setting.
 - **Keep `allowedPrivateNetworks` unset in Misskey.** `/proxy/*` is
   public by design (federation needs remote media), and Misskey's own
   SSRF guard is what keeps it from fetching private addresses. With
