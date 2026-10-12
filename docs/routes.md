@@ -88,6 +88,43 @@ federation には不要と判断し allowlist から除外した。
   静的アセット）── `ClientServerService.ts` で確認済み、すべてクライアント
   向け。`/` では Misskey の SPA ではなく、このプロキシ自身の案内ページだけを返す。
 
+## 転送時のヘッダ除去（`src/headers.rs`）
+
+allowlist は「どのリクエストが Misskey に届くか」を決める。`forward`
+（`src/proxy.rs`）はそれに一致したリクエストをほぼそのまま渡すが、ヘッダ
+ブロックだけは、呼び出し側が書いた値を Misskey に読ませてよいものとそうで
+ないものがある。`src/headers.rs` が次を除去してから `forward` する。
+
+- **接続固有ヘッダ**（RFC 9110 §7.6.1）: `Connection`, `Keep-Alive`,
+  `Proxy-Authenticate`, `Proxy-Authorization`, `Proxy-Connection`, `TE`,
+  `Trailer`, `Transfer-Encoding`, `Upgrade`。これらはこのホップのもので、
+  プロキシは転送してはならない。`Connection` が列挙するヘッダ（例:
+  `Connection: x-custom-hop` の `x-custom-hop`）も併せて除去する。hyper の
+  サーバ・クライアントはどちらもこれらを勝手に落とさない（`Transfer-Encoding:
+  chunked` で受けたボディは復号したうえで `Transfer-Encoding` ヘッダも
+  ヘッダマップに残る）ので、放置すると次のホップへのフレーミング / プロトコル
+  デシンクの材料になる。応答方向（Misskey → 呼び出し側）も同じ。
+- **転送ヘッダ**: `Forwarded`, `X-Forwarded-For`, `X-Forwarded-Host`,
+  `X-Forwarded-Proto`, `X-Forwarded-Port`, `X-Real-IP`, `X-Client-IP`,
+  `CF-Connecting-IP`, `True-Client-IP`。Misskey の `trustProxy` が
+  `request.ip`・`request.protocol`・`request.hostname` をこれらから導くので、
+  呼び出し側に選ばせない。プロキシからは、前段が値を set したものか呼び出し側が
+  append されたものかを区別できないため、すべて落とす（公開ルートにこれらを
+  読む経路は無く、`request.ip` を消費する `/api/*` とサインインのレート制限は
+  そもそも到達できない。前段は別途 replace で揃えること: `README.md`）。
+- **メソッド / ターゲット上書きヘッダ**: `X-HTTP-Method-Override`,
+  `X-Original-URL`, `X-Rewrite-URL`。ターゲットは allowlist が決めるので、
+  呼び出し側に上書きさせない（連合はこれらを使わない）。
+
+HTTP 署名が覆いうる `Host`・`Date`・`Digest`・`Content-Type`・`Signature`・
+`Authorization`・`Accept` など、リクエスト自身の意味を持つヘッダと、生の
+ボディは変更しない（`/inbox` の `Digest` は生ボディに対して計算される）。
+`Transfer-Encoding` を落としてもボディは失われない（hyper が自分のフレーミング
+で送り直す）。応答は Misskey が返したものから接続固有ヘッダだけを落とし、
+`Set-Cookie` を含むその他はそのまま返す（公開ルートはセッション情報を設定
+しない）。`tests/headers.rs` がモック UDS 相手に、`tests/unix_listen.rs` が
+実バイナリと生 HTTP/1.1 で固定する。
+
 ## Accept の上書き（3パスのみ）
 
 `/notes/:note`, `/users/:user`, `/@:acct` は Misskey 側で HTML/AP

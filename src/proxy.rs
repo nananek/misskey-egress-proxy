@@ -11,6 +11,8 @@ use hyper_util::client::legacy::Client;
 use hyper_util::rt::TokioExecutor;
 use hyperlocal::UnixConnector;
 
+use crate::headers;
+
 pub type UdsClient = Client<UnixConnector, Body>;
 
 pub fn build_client() -> UdsClient {
@@ -23,15 +25,18 @@ pub struct ProxyState {
     pub socket: PathBuf,
 }
 
-/// Forwards a request to the Misskey UDS verbatim: same method, same
-/// headers, same raw body. Only the URI's scheme/authority are swapped for
-/// the Unix-socket target; the path and query string are preserved exactly.
+/// Forwards a request to the Misskey UDS: same method, same raw body, and
+/// every header of the caller's except the ones `crate::headers` removes
+/// first. Only the URI's scheme/authority are swapped for the Unix-socket
+/// target; the path and query string are preserved exactly.
 ///
 /// Bodies are streamed in both directions and never buffered, re-encoded, or
 /// otherwise transformed — `/inbox`'s HTTP Signature `Digest` is computed
 /// over the exact raw body, and any mutation here (or gzip, or a body
 /// length change) would break signature verification on Misskey's side.
 pub async fn forward(State(state): State<ProxyState>, mut req: Request) -> Response {
+    headers::sanitize_request(req.headers_mut());
+
     let path_and_query = req
         .uri()
         .path_and_query()
@@ -42,7 +47,10 @@ pub async fn forward(State(state): State<ProxyState>, mut req: Request) -> Respo
     *req.uri_mut() = target;
 
     match state.client.request(req).await {
-        Ok(resp) => resp.map(Body::new).into_response(),
+        Ok(mut resp) => {
+            headers::sanitize_response(resp.headers_mut());
+            resp.map(Body::new).into_response()
+        }
         Err(err) => {
             // An upstream that answers before the request body is fully sent
             // and then closes (Misskey's 64 KiB bodyLimit on `/inbox` does

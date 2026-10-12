@@ -15,6 +15,7 @@ use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -53,6 +54,35 @@ fn spawn_counting_mock_misskey(socket: &Path) -> Arc<AtomicUsize> {
         }
     });
     connections
+}
+
+/// A stand-in Misskey that records the request head (everything up to the
+/// blank line) it received, so a test can assert what reached the upstream
+/// after the server and the relay have both had a look at it.
+fn spawn_capturing_mock_misskey(socket: &Path) -> Arc<Mutex<Vec<u8>>> {
+    let listener = UnixListener::bind(socket).expect("bind mock Misskey socket");
+    let captured = Arc::new(Mutex::new(Vec::new()));
+    let sink = Arc::clone(&captured);
+    thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { break };
+            let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
+            let mut head = Vec::new();
+            let mut buf = [0u8; 1024];
+            while let Ok(n) = stream.read(&mut buf) {
+                if n == 0 {
+                    break;
+                }
+                head.extend_from_slice(&buf[..n]);
+                if head.windows(4).any(|w| w == b"\r\n\r\n") {
+                    break;
+                }
+            }
+            *sink.lock().unwrap() = head;
+            let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok");
+        }
+    });
+    captured
 }
 
 fn spawn_proxy(listen: &Path, misskey: &Path) -> Child {
@@ -838,6 +868,93 @@ fn redirect_mode_without_an_allowlist_starts_and_refuses_everything_external() {
     );
     assert_eq!(header(&response, "cache-control"), Some("no-store"));
     assert_eq!(upstream.load(Ordering::SeqCst), 0);
+
+    cleanup(&mut proxy, &listen, &misskey);
+}
+
+// ---------------------------------------------------------------------------
+// Header hygiene, against the real binary
+// ---------------------------------------------------------------------------
+
+/// The `src/headers.rs` removals happen on the real HTTP/1.1 path too, where
+/// the server parses the request first: hop-by-hop headers (including the ones
+/// a `Connection` header nominates) and caller-asserted forwarding headers
+/// never reach Misskey, while the signature-bearing headers and the body do.
+#[test]
+fn hop_by_hop_and_forwarding_headers_never_reach_misskey_over_http() {
+    let misskey = unique_path("misskey");
+    let listen = unique_path("egress");
+    let captured = spawn_capturing_mock_misskey(&misskey);
+    let mut proxy = spawn_proxy(&listen, &misskey);
+    wait_until_connectable(&listen);
+
+    let response = http_raw(
+        &listen,
+        concat!(
+            "POST /inbox HTTP/1.1\r\n",
+            "Host: misskey.example.com\r\n",
+            "Date: Mon, 12 Oct 2026 00:00:00 GMT\r\n",
+            "Digest: SHA-256=abc\r\n",
+            "Signature: keyId=\"k\"\r\n",
+            "Content-Type: application/activity+json\r\n",
+            "Connection: close, x-custom-hop\r\n",
+            "x-custom-hop: drop me\r\n",
+            "Keep-Alive: timeout=5\r\n",
+            "TE: trailers\r\n",
+            "Upgrade: h2c\r\n",
+            "Proxy-Authorization: Basic zzz\r\n",
+            "X-Forwarded-For: 1.2.3.4\r\n",
+            "X-Real-IP: 1.2.3.4\r\n",
+            "Content-Length: 2\r\n",
+            "\r\n",
+            "{}",
+        )
+        .as_bytes(),
+    );
+    assert!(
+        response.starts_with(b"HTTP/1.1 200"),
+        "unexpected response: {:?}",
+        String::from_utf8_lossy(&response)
+    );
+
+    // The mock answers right after it records the head, but give it a moment.
+    let mut head = Vec::new();
+    for _ in 0..500 {
+        head = captured.lock().unwrap().clone();
+        if !head.is_empty() {
+            break;
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    assert!(!head.is_empty(), "the mock never received the request");
+    let text = String::from_utf8_lossy(&head).to_ascii_lowercase();
+
+    for forbidden in [
+        "connection:",
+        "x-custom-hop:",
+        "keep-alive:",
+        "te:",
+        "upgrade:",
+        "proxy-authorization:",
+        "x-forwarded-for:",
+        "x-real-ip:",
+        "transfer-encoding:",
+    ] {
+        let needle = format!("\r\n{forbidden}");
+        assert!(
+            !text.contains(&needle),
+            "Misskey was sent {forbidden:?}:\n{text}"
+        );
+    }
+    for kept in [
+        "host: misskey.example.com",
+        "date: mon, 12 oct 2026",
+        "digest: sha-256=abc",
+        "signature: keyid=\"k\"",
+        "content-type: application/activity+json",
+    ] {
+        assert!(text.contains(kept), "Misskey did not get {kept:?}:\n{text}");
+    }
 
     cleanup(&mut proxy, &listen, &misskey);
 }
