@@ -306,6 +306,95 @@ async fn dual_purpose_paths_always_ask_misskey_for_ap_json() {
     }
 }
 
+const AP_ROUTES: &[&str] = &[
+    "/.well-known/webfinger?resource=acct:a@b",
+    "/.well-known/nodeinfo",
+    "/nodeinfo/2.1",
+    "/notes/abc",
+    "/notes/abc/activity",
+    "/users/abc",
+    "/users/abc/outbox",
+    "/users/abc/followers",
+    "/@alice",
+    "/@alice@remote.example",
+    "/emojis/blobcat",
+    "/likes/abc",
+    "/follows/a/b",
+];
+
+#[tokio::test]
+async fn a_browser_opening_an_ap_route_as_a_page_is_sent_home() {
+    let app = build_app().await;
+
+    for path in AP_ROUTES {
+        for dest in ["document", "iframe", "frame", "Document"] {
+            let resp = get(
+                &app,
+                path,
+                &[("sec-fetch-dest", dest), ("accept", "text/html")],
+            )
+            .await;
+            assert_eq!(resp.status(), StatusCode::FOUND, "{path} as {dest}");
+            assert_eq!(resp.headers().get("location").unwrap(), "/", "{path}");
+            assert_eq!(
+                resp.headers().get("cache-control").unwrap(),
+                "no-store",
+                "{path}: the 302 depends on Sec-Fetch-Dest and must not be cached"
+            );
+            assert!(!resp.headers().contains_key("x-mock-path"), "{path}");
+        }
+    }
+
+    // A form posted at an inbox is a page load too; it is not forwarded.
+    let resp = call(&app, "POST", "/inbox", &[("sec-fetch-dest", "document")]).await;
+    assert_eq!(resp.status(), StatusCode::FOUND);
+}
+
+#[tokio::test]
+async fn non_navigation_requests_to_ap_routes_are_still_forwarded() {
+    let app = build_app().await;
+
+    // Federated servers and link-preview fetchers send no Sec-Fetch-Dest,
+    // whatever their Accept says; a browser `fetch()` sends `empty`.
+    for path in AP_ROUTES {
+        for headers in [
+            &[][..],
+            &[("accept", "text/html")][..],
+            &[AP_ACCEPT][..],
+            &[("sec-fetch-dest", "empty")][..],
+            &[("sec-fetch-dest", "image")][..],
+        ] {
+            let resp = get(&app, path, headers).await;
+            assert_eq!(resp.status(), StatusCode::OK, "{path} with {headers:?}");
+            assert!(resp.headers().contains_key("x-mock-path"), "{path}");
+        }
+    }
+}
+
+#[tokio::test]
+async fn media_and_home_are_not_redirected_on_a_page_load() {
+    let app = build_app().await;
+
+    // Opening an image in its own tab is a page load; media is left alone.
+    for path in [
+        "/files/abc123",
+        "/files/app-default.jpg",
+        "/proxy/image.webp?url=https://example.com/a.png",
+        "/identicon/alice@example.com",
+        "/",
+        "/assets/misskey.svg",
+    ] {
+        let resp = get(&app, path, &[("sec-fetch-dest", "document")]).await;
+        assert_eq!(resp.status(), StatusCode::OK, "{path}");
+    }
+
+    // Paths outside the allowlist stay a 404, not a redirect.
+    for path in ["/api/meta", "/settings", "/@alice.rss"] {
+        let resp = get(&app, path, &[("sec-fetch-dest", "document")]).await;
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND, "{path}");
+    }
+}
+
 #[tokio::test]
 async fn acct_capture_preserves_full_segment() {
     let app = build_app().await;

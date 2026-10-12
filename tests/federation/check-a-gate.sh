@@ -98,6 +98,36 @@ if [ -n "$gate_note_id" ]; then
 fi
 
 ##
+## A browser opening an AP route as a page is sent to the landing page; the
+## same URL fetched by anything that is not a page load still gets AP JSON.
+##
+note "checking that a browser page load on an AP route is sent to /"
+for path in ${gate_note_id:+"/notes/${gate_note_id}"} "/@admin" "/.well-known/nodeinfo"; do
+	headers="$(curl -sk -D - -o /dev/null -H 'Sec-Fetch-Dest: document' -H 'Accept: text/html' \
+		"https://misskey-a${path}" | tr -d '\r')"
+	status="$(printf '%s\n' "$headers" | awk 'NR==1{print $2}')"
+	location="$(printf '%s\n' "$headers" | awk -F': ' 'tolower($1)=="location"{print $2}')"
+	if [ "$status" = "302" ] && [ "$location" = "/" ]; then
+		ok "${path} as a page load -> 302 to /"
+	else
+		bad "${path} as a page load -> HTTP ${status} Location '${location}', expected 302 to /"
+	fi
+done
+
+if [ -n "$gate_note_id" ]; then
+	status="$(call GET "https://misskey-a/notes/${gate_note_id}" -H 'Sec-Fetch-Dest: empty')"
+	if [ "$status" = "200" ] && [ "$(jq -r '.type // empty' "$BODY_FILE")" = "Note" ]; then
+		ok "/notes/${gate_note_id} with Sec-Fetch-Dest: empty -> 200 with a real AP Note object"
+	else
+		bad "/notes/${gate_note_id} with Sec-Fetch-Dest: empty -> HTTP ${status}, expected the AP Note"
+	fi
+fi
+
+status="$(call GET "https://misskey-a/files/app-default.jpg" -H 'Sec-Fetch-Dest: document')"
+[ "$status" != "302" ] && ok "/files/app-default.jpg as a page load -> HTTP ${status} (media is not sent to /)" \
+	|| bad "/files/app-default.jpg as a page load -> 302, media must not be redirected"
+
+##
 ## Media: forwarded for external callers, redirected for internal ones.
 ##
 note "checking /files/app-default.jpg"
