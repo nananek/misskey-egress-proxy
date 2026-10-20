@@ -19,7 +19,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use axum::Router;
 use axum::body::{Body, to_bytes};
-use axum::http::{Request, StatusCode};
+use axum::http::{Request, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::any;
 use tower::ServiceExt;
@@ -36,14 +36,13 @@ const INTERNAL_BASE_URL: &str = "https://internal.example.ts.net";
 const INTERNAL_SUFFIX: &str = ".internal.example.ts.net";
 const AP_ACCEPT: (&str, &str) = ("accept", "application/activity+json");
 
-/// Spawns a fake Misskey backend on a Unix socket that answers every
-/// request with 200 and echoes the request path+query into `x-mock-path`
-/// and the request's `Accept` into `x-mock-accept`.
-async fn spawn_mock_backend() -> PathBuf {
+/// Spawns a fake backend on a Unix socket and returns the socket path. The
+/// caller supplies the router, so tests can stand in for different Misskey
+/// behaviours (path echo, HTML page, ...).
+async fn spawn_backend(app: Router) -> PathBuf {
     let socket = std::env::temp_dir().join(format!("mep-test-{}.sock", unique_suffix()));
     let _ = std::fs::remove_file(&socket);
 
-    let app = Router::new().fallback(any(echo_path));
     let listener = tokio::net::UnixListener::bind(&socket).expect("bind mock backend socket");
 
     tokio::spawn(async move {
@@ -60,6 +59,25 @@ async fn spawn_mock_backend() -> PathBuf {
         tokio::time::sleep(std::time::Duration::from_millis(5)).await;
     }
     socket
+}
+
+/// Spawns a fake Misskey backend on a Unix socket that answers every
+/// request with 200 and echoes the request path+query into `x-mock-path`
+/// and the request's `Accept` into `x-mock-accept`.
+async fn spawn_mock_backend() -> PathBuf {
+    spawn_backend(Router::new().fallback(any(echo_path))).await
+}
+
+/// Spawns a backend that answers every request with an HTML page, standing in
+/// for Misskey's SPA catch-all.
+async fn spawn_html_backend() -> PathBuf {
+    spawn_backend(Router::new().fallback(any(|| async {
+        (
+            [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
+            "<html><body>spa</body></html>",
+        )
+    })))
+    .await
 }
 
 async fn echo_path(req: Request<Body>) -> Response {
@@ -126,6 +144,15 @@ async fn build_app_with_static_dir(static_dir: PathBuf) -> Router {
         vec![],
         spawn_mock_backend().await,
         static_dir,
+    )
+}
+
+async fn build_app_with_backend(socket: PathBuf) -> Router {
+    build_app_with(
+        MediaMode::Proxy,
+        vec![],
+        socket,
+        PathBuf::from("/path/that/does/not/exist"),
     )
 }
 
@@ -303,6 +330,61 @@ async fn dual_purpose_paths_always_ask_misskey_for_ap_json() {
                 "{path} with Accept {accept:?} must reach Misskey asking for AP JSON"
             );
         }
+    }
+}
+
+/// `Connection` can nominate headers as hop-by-hop. The gate removes those
+/// nominations before it sets `Accept`, so a caller cannot name the header the
+/// gate is about to add and have the relay strip it again.
+#[tokio::test]
+async fn connection_cannot_nominate_the_gated_accept() {
+    let app = build_app().await;
+
+    for path in ["/notes/abc", "/users/abc", "/@alice"] {
+        let resp = get(
+            &app,
+            path,
+            &[("connection", "accept"), ("accept", "text/html")],
+        )
+        .await;
+
+        assert_eq!(
+            resp.status(),
+            StatusCode::OK,
+            "{path} must still be forwarded"
+        );
+        assert_eq!(
+            resp.headers().get("x-mock-accept").unwrap(),
+            "application/activity+json",
+            "{path} must still ask Misskey for AP JSON"
+        );
+    }
+}
+
+/// Misskey sometimes answers with an HTML page on a path that missed every
+/// allowlisted route (the SPA catch-all). The public face must not relay it,
+/// even when the caller asked for HTML.
+#[tokio::test]
+async fn html_upstream_responses_are_not_relayed() {
+    let app = build_app_with_backend(spawn_html_backend().await).await;
+
+    for path in [
+        "/notes/abc",
+        "/emojis/abc",
+        "/files/abc",
+        "/proxy/https%3A%2F%2Fexample.test%2Fimage.png",
+        "/identicon/abc",
+    ] {
+        let resp = get(&app, path, &[("accept", "text/html")]).await;
+
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND, "{path}");
+        assert_ne!(
+            resp.headers()
+                .get(header::CONTENT_TYPE)
+                .and_then(|value| value.to_str().ok()),
+            Some("text/html; charset=utf-8"),
+            "{path} must not relay the HTML content type"
+        );
     }
 }
 

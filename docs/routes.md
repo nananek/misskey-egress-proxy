@@ -139,6 +139,13 @@ HTTP 署名が覆いうる `Host`・`Date`・`Digest`・`Content-Type`・`Signat
 `Accept: */*` や `Accept` 無しで取りに来る連合実装を巻き込んで落とすため、
 上書きに改めた。どうせ書き換えるヘッダで相手を選別する意味は無い。
 
+上書きは 3 パスに限られるため、`src/proxy.rs` の `forward` はもう一層持つ。
+Misskey が `Content-Type: text/html` を返したレスポンスは body を中継せず
+404 に置き換える。allowlist 上のルートが Misskey 側のルーティングで一致せず
+SPA catch-all に落ちた場合（例: パラメータが Fastify の `maxParamLength` を
+超えた場合）でも、公開面に HTML は出ない。プロキシ自身の案内ページは
+`forward` を通らないので影響しない。
+
 ## ブラウザのページ遷移は `/` へ 302
 
 人間がブラウザで開くのは `/` の案内ページだけにする。AP 系と discovery 系の

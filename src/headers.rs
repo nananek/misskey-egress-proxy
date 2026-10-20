@@ -89,6 +89,17 @@ pub fn sanitize_response(headers: &mut HeaderMap) {
     strip_hop_by_hop(headers);
 }
 
+/// Whether a response carries an HTML document. The public face never serves
+/// Misskey's HTML — not the SPA catch-all, not an error page — so `forward`
+/// turns such a response into a 404 instead of relaying it.
+pub fn is_html(headers: &HeaderMap) -> bool {
+    headers
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.split(';').next())
+        .is_some_and(|media_type| media_type.trim().eq_ignore_ascii_case("text/html"))
+}
+
 /// Removes the connection-specific headers, and every header a `Connection`
 /// header nominates (RFC 9110 §7.6.1: a proxy must remove the fields named by
 /// the connection options too).
@@ -195,6 +206,30 @@ mod tests {
 
         assert!(!headers.contains_key("trimmed"));
         assert_eq!(headers.get("x-kept").unwrap(), "kept");
+    }
+
+    #[test]
+    fn html_is_recognised_case_insensitively_and_with_parameters() {
+        for value in [
+            "text/html",
+            "Text/HTML; charset=utf-8",
+            " text/html ;charset=utf-8",
+        ] {
+            let headers = map(&[("content-type", value)]);
+            assert!(is_html(&headers), "{value} must count as HTML");
+        }
+
+        for value in [
+            "text/plain",
+            "application/xhtml+xml",
+            "application/activity+json",
+            "text/htmlx",
+        ] {
+            let headers = map(&[("content-type", value)]);
+            assert!(!is_html(&headers), "{value} must not count as HTML");
+        }
+
+        assert!(!is_html(&HeaderMap::new()));
     }
 
     #[test]

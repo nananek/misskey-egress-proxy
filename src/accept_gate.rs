@@ -6,6 +6,8 @@ use axum::http::{HeaderValue, header};
 use axum::middleware::Next;
 use axum::response::Response;
 
+use crate::headers::sanitize_request;
+
 const AP_JSON: HeaderValue = HeaderValue::from_static("application/activity+json");
 
 /// `/notes/{note}`, `/users/{user}`, and `/@{acct}` serve either an
@@ -23,6 +25,10 @@ const AP_JSON: HeaderValue = HeaderValue::from_static("application/activity+json
 /// no `Accept` at all, and that is not a bet worth making for a header this
 /// proxy is about to overwrite anyway.
 pub async fn force_ap_accept(mut req: Request, next: Next) -> Response {
+    // Strip the caller's hop-by-hop headers first. `forward` sanitizes again,
+    // but a `Connection` nomination that is still present here would name the
+    // `Accept` inserted below, and that later pass would remove it again.
+    sanitize_request(req.headers_mut());
     req.headers_mut().insert(header::ACCEPT, AP_JSON);
     next.run(req).await
 }

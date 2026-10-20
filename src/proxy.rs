@@ -49,6 +49,13 @@ pub async fn forward(State(state): State<ProxyState>, mut req: Request) -> Respo
     match state.client.request(req).await {
         Ok(mut resp) => {
             headers::sanitize_response(resp.headers_mut());
+            // The public face never serves Misskey's HTML (the SPA catch-all
+            // or an error page): a response that claims to be a page is a
+            // route miss from the caller's point of view, not something this
+            // proxy relays.
+            if headers::is_html(resp.headers()) {
+                return (StatusCode::NOT_FOUND, "not found").into_response();
+            }
             resp.map(Body::new).into_response()
         }
         Err(err) => {
