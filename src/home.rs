@@ -13,6 +13,7 @@ use crate::reject;
 
 const INDEX_HTML: &str = include_str!("../static/index.html");
 const MISSKEY_LOGO: &[u8] = include_bytes!("../static/misskey.svg");
+const INSTANCE_ICON: &[u8] = include_bytes!("../static/icon.webp");
 
 /// Builds the only human-facing routes on this otherwise federation-only
 /// endpoint. Files in `static_dir` take precedence over the copies embedded
@@ -22,7 +23,8 @@ where
     S: Clone + Send + Sync + 'static,
 {
     let index_dir = static_dir.clone();
-    let logo_dir = static_dir;
+    let logo_dir = static_dir.clone();
+    let icon_dir = static_dir;
 
     Router::new()
         .route(
@@ -44,6 +46,16 @@ where
                 async move {
                     reject::drain_body(req.into_body()).await;
                     misskey_logo(dir).await
+                }
+            }),
+        )
+        .route(
+            "/assets/icon.webp",
+            get(move |req: Request| {
+                let dir = icon_dir.clone();
+                async move {
+                    reject::drain_body(req.into_body()).await;
+                    instance_icon(dir).await
                 }
             }),
         )
@@ -95,4 +107,38 @@ async fn read_override(static_dir: &Path, name: &str, bundled: &'static [u8]) ->
     tokio::fs::read(static_dir.join(name))
         .await
         .unwrap_or_else(|_| bundled.to_vec())
+}
+
+/// The instance's own icon, linked from the landing page as
+/// `<link rel="icon">`.
+///
+/// A federated server does not fetch `/api/meta` to learn another instance's
+/// icon: Misskey's `FetchInstanceMetadataService` reads `/manifest.json`, the
+/// `<link rel="icon">` (or `apple-touch-icon`) of the root HTML, and finally
+/// `/favicon.ico`. A federation-only gateway that exposes none of those makes
+/// every peer keep whatever icon URL it stored before — including one that
+/// pointed at a `/files/*` path the gateway no longer serves, which leaves the
+/// icon broken everywhere and cannot be repaired from the remote side. Serving
+/// an icon here, on the same origin as the landing page, gives those fetchers
+/// a reachable URL.
+///
+/// WebP rather than SVG: Misskey's media proxy fetches this URL through
+/// `/proxy/preview.webp`, and a raster source is what that conversion expects.
+/// It is inert, but `nosniff` and the sandboxing CSP keep an operator's
+/// replacement file from being interpreted as an active document.
+async fn instance_icon(static_dir: PathBuf) -> Response {
+    let body = read_override(&static_dir, "icon.webp", INSTANCE_ICON).await;
+    (
+        [
+            (header::CONTENT_TYPE, "image/webp"),
+            (
+                header::CONTENT_SECURITY_POLICY,
+                "default-src 'none'; sandbox",
+            ),
+            (header::CACHE_CONTROL, "public, max-age=604800"),
+            (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
+        ],
+        body,
+    )
+        .into_response()
 }

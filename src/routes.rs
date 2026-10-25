@@ -16,13 +16,14 @@ use crate::navigation::redirect_navigation;
 use crate::proxy::{ProxyState, forward};
 use crate::reject;
 
-/// The entire public surface, in one place. The two landing-page routes are
+/// The entire public surface, in one place. The three landing-page routes are
 /// served locally; every other registered path is allowed through to
 /// Misskey, and everything else falls through to axum's default 404. See
 /// `docs/routes.md` for why each of these, and only these, paths is here.
 pub fn build(proxy_state: ProxyState, config: Arc<Config>) -> Router {
     // A deliberately tiny human-facing surface: one informational page and
-    // its vendored Misskey wordmark. Neither route reaches Misskey.
+    // its two assets (the vendored Misskey wordmark and the instance icon).
+    // None of these routes reaches Misskey.
     let home = home::routes(config.static_dir.clone());
 
     // `/files/*` and `/proxy/*`: media. `redirect_media` sends an internal

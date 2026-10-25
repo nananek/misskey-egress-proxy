@@ -61,8 +61,8 @@ pub struct Config {
     /// both modes.
     pub internal_referer_suffix: String,
     /// Directory checked for replacements for the bundled landing page.
-    /// Mounting a directory here can override `index.html` and
-    /// `misskey.svg` without rebuilding the image.
+    /// Mounting a directory here can override `index.html`, `misskey.svg`
+    /// and `icon.webp` without rebuilding the image.
     pub static_dir: PathBuf,
     /// `MEDIA_MODE`: whether media requests are relayed (`proxy`, the
     /// default) or answered locally (`redirect`).

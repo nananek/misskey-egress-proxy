@@ -44,7 +44,8 @@ citations into Misskey's own source — is in [`docs/routes.md`](docs/routes.md)
   (this matters for `/inbox`'s HTTP Signature `Digest`), and the caller's
   headers except the connection-specific and caller-asserted ones removed in
   [`src/headers.rs`](src/headers.rs) — or returns 404. The only local public
-  content is the informational page at `/` and its Misskey wordmark asset.
+  content is the informational page at `/` and its two assets: the Misskey
+  wordmark and the instance icon linked from that page as its favicon.
 - **A few narrow exceptions**:
   - Three paths (`/notes/:note`, `/users/:user`, `/@:acct`) serve either
     an ActivityPub JSON object or a full HTML page from Misskey, chosen by
@@ -102,15 +103,26 @@ All via environment variables (see `src/config.rs`):
 | `INTERNAL_REFERER_SUFFIX` | `.your-tailnet.ts.net` | Hostname suffix that marks a `Referer` as internal. Required in both modes, and never empty or only dots: an empty suffix would make every `Referer` internal, and `.` every host written with a trailing dot, so the proxy refuses to start. Trimmed and lowercased when read, then only ASCII letters, digits, `-` and `.` are accepted (write an IDN in punycode) with no empty label (one `.` at each end is fine). With a leading dot it matches any host that ends with it; without one it matches that host and its subdomains, not `notyour-tailnet.ts.net` |
 | `MEDIA_MODE` | `proxy` (default), `redirect` | `proxy` relays `/files/*` and `/proxy/*` to Misskey (an internal `Referer` still gets the redirect). `redirect` never forwards them: see [Media mode](#media-mode). An unknown or empty value stops the proxy at startup |
 | `MEDIA_ALLOWED_PREFIXES` | `https://misskey.example.com/files/,https://r2.example.net/` | `redirect` mode only (ignored in `proxy` mode, with a `warn` log if `RUST_LOG` lets it through): comma-separated `https://host[:port][/path-prefix]` entries that a `/proxy/*?url=` request may be redirected to. Empty means every such request is a 404. An invalid entry stops the proxy at startup |
-| `STATIC_DIR` | `/usr/local/share/misskey-egress-proxy` (default) | Directory containing optional `index.html` and `misskey.svg` overrides for the public landing page |
+| `STATIC_DIR` | `/usr/local/share/misskey-egress-proxy` (default) | Directory containing optional `index.html`, `misskey.svg` and `icon.webp` overrides for the public landing page |
 
 The image includes a default page at `/`. To replace it without rebuilding,
 bind-mount a directory over `/usr/local/share/misskey-egress-proxy` (or set
-`STATIC_DIR` to another mounted path). Either file may be omitted; a missing
-`index.html` or `misskey.svg` falls back to the version bundled into the binary.
+`STATIC_DIR` to another mounted path). Each file may be omitted; a missing
+`index.html`, `misskey.svg` or `icon.webp` falls back to the version bundled
+into the binary.
 The bundled wordmark is vendored from
 [`packages/frontend/assets/misskey.svg`](https://github.com/misskey-dev/misskey/blob/develop/packages/frontend/assets/misskey.svg)
 in the official Misskey repository.
+
+`/assets/icon.webp` is referenced by the landing page as
+`<link rel="icon">`. Misskey's instance-metadata fetcher discovers an
+instance's icon from `/manifest.json`, the root HTML's `<link rel="icon">` (or
+`apple-touch-icon`), or `/favicon.ico` — not from `/api/meta`. A gateway that
+hides the client must still publish one of them. Without it, peers keep the
+icon URL they stored earlier even after it stops resolving, and the broken
+icon cannot be repaired from their side. Replace the bundled WebP with your
+own instance icon (192–512 px, raster: Misskey fetches it through its
+`preview.webp` media proxy) via `STATIC_DIR`.
 
 See `docker-compose.yml` for a production reference layout.
 

@@ -256,6 +256,7 @@ fn rejections_wait_for_the_request_body_before_answering() {
         ),
         ("GET", "/", "", "HTTP/1.1 200 OK"),
         ("GET", "/assets/misskey.svg", "", "HTTP/1.1 200 OK"),
+        ("GET", "/assets/icon.webp", "", "HTTP/1.1 200 OK"),
     ] {
         let mut stream = UnixStream::connect(&listen).expect("connect");
         stream
@@ -292,11 +293,12 @@ fn rejections_wait_for_the_request_body_before_answering() {
             .set_read_timeout(Some(Duration::from_secs(5)))
             .unwrap();
         stream.write_all(b"0\r\n\r\n").expect("terminate the body");
-        let mut response = String::new();
-        stream.read_to_string(&mut response).expect("read response");
+        let mut response = Vec::new();
+        stream.read_to_end(&mut response).expect("read response");
         assert!(
-            response.starts_with(expected),
-            "{method} {path}: expected {expected}, got {response}"
+            response.starts_with(expected.as_bytes()),
+            "{method} {path}: expected {expected}, got {}",
+            String::from_utf8_lossy(&response)
         );
     }
 

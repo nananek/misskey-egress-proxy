@@ -8,12 +8,13 @@
 
 ## 許可ルート
 
-`/` と `/assets/misskey.svg` は案内ページとしてプロキシ自身が返す静的コンテンツで、
-Misskey UDS へは転送しない。既定版はバイナリとコンテナイメージに同梱し、
-`STATIC_DIR`（既定 `/usr/local/share/misskey-egress-proxy`）への bind mount で
-差し替えられる。どちらも CSP 付きで返し（`/` は `default-src 'none'`、
-SVG はそれに `sandbox` を加えたもの）、差し替えファイルが公開オリジンで
-スクリプトを実行できないようにする。以下は Misskey へ転送するルートの一覧。
+`/` と `/assets/misskey.svg`、`/assets/icon.webp` は案内ページとしてプロキシ自身が
+返す静的コンテンツで、Misskey UDS へは転送しない。既定版はバイナリと
+コンテナイメージに同梱し、`STATIC_DIR`（既定
+`/usr/local/share/misskey-egress-proxy`）への bind mount で差し替えられる。
+どれも CSP 付きで返し（`/` は `default-src 'none'`、SVG と WebP はそれに
+`sandbox` を加えたもの）、差し替えファイルが公開オリジンでスクリプトを
+実行できないようにする。以下は Misskey へ転送するルートの一覧。
 
 | パス | メソッド | 出典 | 備考 |
 |---|---|---|---|
@@ -40,6 +41,29 @@ SVG はそれに `sandbox` を加えたもの）、差し替えファイルが�
 | `/files/:key`, `/files/:key/*` | GET | 同上:93,97 | drive file 本体配信。内部 Referer は内部へ 302。`MEDIA_MODE=redirect` では上流へ転送しない（下記） |
 | `/proxy/:url*` | GET | 同上:106 | media-proxy。内部リダイレクト特例あり。`MEDIA_MODE=redirect` では上流へ転送せず、許可した元 URL へ 302（下記） |
 | `/identicon/:x` | GET | `ServerService.ts:242`（inline route） | **要含める**。下記参照 |
+
+## `/assets/icon.webp` を置く理由
+
+連合先がインスタンスのアイコンを取得する経路は `/api/meta` ではない。
+Misskey の `FetchInstanceMetadataService.ts`（2025.4.1 と 2026-10 時点の
+`develop` で確認）は、`/manifest.json` の `icons[0].src`、ルート HTML の
+`<link rel="icon">` / `apple-touch-icon`、最後に `/favicon.ico` の HEAD の順で
+探し、どれも取れなければ `iconUrl` / `faviconUrl` を更新しない
+（`infoUpdatedAt` だけは更新するので、管理画面の日時は新しく見える）。
+
+クライアント API を隠すこのゲートウェイは、そのどれも公開していなかった。
+そのため、メディアを別オリジンへ移した後に、連合先の DB には移行前の
+`https://<host>/files/...` が残り続ける。その URL が 204 や 404 を返す
+ようになると、`instance-info` のアイコンは連合先で壊れたままになり、
+リモート側からは直せない。`misskey.io` の 2025.4 系は
+`faviconUrl ?? iconUrl` を使うので、`iconUrl` だけ直しても `faviconUrl` が
+優先される点にも注意する。
+
+そこで `/` に `<link rel="icon" href="/assets/icon.webp">` を置き、同じ
+オリジンでアイコンを返す。次のメタデータ再取得から `iconUrl` と
+`faviconUrl` の両方が到達可能な URL になる。SVG ではなく WebP なのは、
+Misskey のメディアプロキシが `/proxy/preview.webp` でラスタ画像として
+取りに来るため。
 
 ## `/identicon/:x` を含める理由
 
