@@ -263,9 +263,14 @@ async fn root_serves_the_bundled_landing_page() {
     );
     assert!(resp.headers().contains_key("content-security-policy"));
     let body = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+    let html = String::from_utf8_lossy(&body);
     assert!(
-        String::from_utf8_lossy(&body).contains("misskey-egress-proxy"),
+        html.contains("misskey-egress-proxy"),
         "the root should contain the project landing page"
+    );
+    assert!(
+        html.contains(r#"rel="icon""#) && html.contains("/assets/icon.webp"),
+        "the root should link the icon remote servers discover: {html}"
     );
 
     let logo = get(&app, "/assets/misskey.svg", &[]).await;
@@ -282,6 +287,20 @@ async fn root_serves_the_bundled_landing_page() {
         .unwrap();
     assert!(csp.contains("default-src 'none'"), "{csp}");
     assert!(csp.contains("sandbox"), "{csp}");
+
+    let icon = get(&app, "/assets/icon.webp", &[]).await;
+    assert_eq!(icon.status(), StatusCode::OK);
+    assert_eq!(icon.headers().get("content-type").unwrap(), "image/webp");
+    assert_eq!(
+        icon.headers().get("x-content-type-options").unwrap(),
+        "nosniff"
+    );
+    let icon = to_bytes(icon.into_body(), usize::MAX).await.unwrap();
+    assert!(
+        icon.starts_with(b"RIFF"),
+        "the icon route should serve the bundled WebP"
+    );
+    assert_eq!(&icon[8..12], b"WEBP");
 }
 
 #[tokio::test]
@@ -290,6 +309,7 @@ async fn mounted_static_files_override_the_bundled_page() {
     std::fs::create_dir(&static_dir).unwrap();
     std::fs::write(static_dir.join("index.html"), "<h1>mounted page</h1>").unwrap();
     std::fs::write(static_dir.join("misskey.svg"), "<svg>mounted</svg>").unwrap();
+    std::fs::write(static_dir.join("icon.webp"), b"mounted icon").unwrap();
 
     let app = build_app_with_static_dir(static_dir.clone()).await;
     let resp = get(&app, "/", &[]).await;
@@ -299,6 +319,10 @@ async fn mounted_static_files_override_the_bundled_page() {
     let logo = get(&app, "/assets/misskey.svg", &[]).await;
     let body = to_bytes(logo.into_body(), usize::MAX).await.unwrap();
     assert_eq!(body.as_ref(), b"<svg>mounted</svg>");
+
+    let icon = get(&app, "/assets/icon.webp", &[]).await;
+    let body = to_bytes(icon.into_body(), usize::MAX).await.unwrap();
+    assert_eq!(body.as_ref(), b"mounted icon");
 
     std::fs::remove_dir_all(static_dir).unwrap();
 }
@@ -465,6 +489,7 @@ async fn media_and_home_are_not_redirected_on_a_page_load() {
         "/identicon/alice@example.com",
         "/",
         "/assets/misskey.svg",
+        "/assets/icon.webp",
     ] {
         let resp = get(&app, path, &[("sec-fetch-dest", "document")]).await;
         assert_eq!(resp.status(), StatusCode::OK, "{path}");

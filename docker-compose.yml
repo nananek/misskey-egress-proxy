@@ -43,7 +43,7 @@ services:
       - misskey-uds:/run/misskey:ro
       - egress-uds:/run/egress
       # Optional: replace the bundled landing page without rebuilding.
-      # The directory may contain index.html and/or misskey.svg.
+      # The directory may contain index.html, misskey.svg and/or icon.webp.
       # - ./static:/usr/local/share/misskey-egress-proxy:ro
 
 volumes:

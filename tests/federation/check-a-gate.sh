@@ -36,6 +36,19 @@ if [ "$status" = "200" ] && grep -q 'misskey-egress-proxy' "$BODY_FILE"; then
 else
 	bad "/ -> HTTP ${status}, expected the proxy landing page"
 fi
+if grep -q '/assets/icon.webp' "$BODY_FILE"; then
+	ok "/ links /assets/icon.webp for remote icon discovery"
+else
+	bad "/ does not link /assets/icon.webp; peers cannot refresh the instance icon"
+fi
+
+note "checking the landing page's icon asset"
+status="$(call GET "https://misskey-a/assets/icon.webp")"
+if [ "$status" = "200" ]; then
+	ok "/assets/icon.webp -> 200"
+else
+	bad "/assets/icon.webp -> HTTP ${status}, expected 200"
+fi
 
 ##
 ## Negative test: everything NOT on the allowlist must be unreachable from
