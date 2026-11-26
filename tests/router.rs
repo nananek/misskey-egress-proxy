@@ -1208,3 +1208,26 @@ async fn responses_the_media_layer_does_not_produce_are_left_alone() {
         );
     }
 }
+
+/// A request-target that Fastify would reject as `FST_ERR_BAD_URL` is
+/// answered by the proxy, not relayed. Misskey's error document quotes the raw
+/// target (and query) back, so the public face must not expose it.
+#[tokio::test]
+async fn malformed_percent_encoding_is_refused_before_the_backend() {
+    let app = build_app().await;
+
+    for path in ["/files/%ff?canary=1", "/files/%", "/files/%c3"] {
+        let resp = get(&app, path, &[]).await;
+        assert_eq!(
+            resp.status(),
+            StatusCode::BAD_REQUEST,
+            "path {path} should be refused"
+        );
+        assert!(
+            !resp.headers().contains_key("x-mock-path"),
+            "path {path} must not reach the backend"
+        );
+        let body = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        assert!(body.is_empty(), "path {path} must not echo the target");
+    }
+}
