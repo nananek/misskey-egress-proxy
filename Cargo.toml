@@ -9,6 +9,7 @@ http-body-util = "0.1.5"
 hyper = { version = "1.11.1", features = ["full"] }
 hyper-util = { version = "0.1.20", features = ["full"] }
 hyperlocal = "0.9.1"
+percent-encoding = "2.3.2"
 tokio = { version = "1.53.1", features = ["full"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }

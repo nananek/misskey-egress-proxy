@@ -10,6 +10,7 @@ use axum::response::{IntoResponse, Response};
 use hyper_util::client::legacy::Client;
 use hyper_util::rt::TokioExecutor;
 use hyperlocal::UnixConnector;
+use percent_encoding::percent_decode_str;
 
 use crate::headers;
 
@@ -43,6 +44,17 @@ pub async fn forward(State(state): State<ProxyState>, mut req: Request) -> Respo
         .map(|pq| pq.as_str())
         .unwrap_or("/");
 
+    // Misskey (Fastify) rejects a request-target whose percent-escapes do not
+    // decode to UTF-8 with `FST_ERR_BAD_URL`, and that error document echoes
+    // the raw target and query back. Answer such a request here instead: it
+    // has no valid route either way, and the public face must not relay an
+    // internal framework error. Checking the raw target (`%2F` and `%ff` both
+    // reach us intact) keeps the relay transparent for everything valid.
+    if !is_valid_raw_target(path_and_query) {
+        tracing::debug!("malformed percent-encoding in request-target refused");
+        return (StatusCode::BAD_REQUEST, "").into_response();
+    }
+
     let target: Uri = hyperlocal::Uri::new(&state.socket, path_and_query).into();
     *req.uri_mut() = target;
 
@@ -68,6 +80,65 @@ pub async fn forward(State(state): State<ProxyState>, mut req: Request) -> Respo
             // a 10 MiB `/inbox` body, direct and through nginx alike.
             tracing::error!(error = %err, "upstream request to misskey UDS failed");
             (StatusCode::BAD_GATEWAY, "upstream unavailable").into_response()
+        }
+    }
+}
+
+/// Whether a raw request-target can be handed to Misskey unchanged.
+///
+/// Every `%` must start a two-digit hex escape, and the whole target must
+/// percent-decode to UTF-8. Fastify decodes the path and query the same way,
+/// so anything this rejects would have become a `FST_ERR_BAD_URL` response
+/// that quotes the raw target back to the caller.
+fn is_valid_raw_target(target: &str) -> bool {
+    let bytes = target.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' {
+            if i + 2 >= bytes.len()
+                || !(bytes[i + 1] as char).is_ascii_hexdigit()
+                || !(bytes[i + 2] as char).is_ascii_hexdigit()
+            {
+                return false;
+            }
+            i += 3;
+        } else {
+            i += 1;
+        }
+    }
+    percent_decode_str(target).decode_utf8().is_ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_valid_raw_target;
+
+    #[test]
+    fn valid_percent_escapes_are_accepted() {
+        for target in [
+            "/files/abc",
+            "/files/abc?x=1",
+            "/files/%E3%81%82",
+            "/files/a%2Fb",
+            "/proxy/image.webp?url=https%3A%2F%2Fexample.com%2Fa.png",
+            "/inbox?x=%00",
+        ] {
+            assert!(is_valid_raw_target(target), "{target} should be valid");
+        }
+    }
+
+    #[test]
+    fn malformed_or_non_utf8_escapes_are_refused() {
+        for target in [
+            "/files/%ff",
+            "/files/%ff?canary=1",
+            "/files/%",
+            "/files/%f",
+            "/files/%zz",
+            "/files/%c3",
+            "/files/%ed%a0%80",
+        ] {
+            assert!(!is_valid_raw_target(target), "{target} should be refused");
         }
     }
 }
